@@ -11,38 +11,24 @@ import { cn } from "@/lib/utils";
 import type { Item } from "@tier-list/shared";
 import { isCardData, type CardData } from "./dnd";
 
-/** Deterministic hue swatch color (matches the design: hsl(h,40%,46%)). */
-function swatchColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return `hsl(${((hash % 360) + 360) % 360},40%,46%)`;
-}
-
-function initials(name: string): string {
-  const t = name.trim();
-  return t ? t.slice(0, 2) : "?";
+function swatch(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return `hsl(${((h % 360) + 360) % 360},40%,46%)`;
 }
 
 type ItemCardProps = {
   item: Item;
   listId: string;
-  /** Opens the tier popover, anchored to the clicked card's rect. */
   onSelect?: (item: Item, rect: DOMRect) => void;
-  /** Search match → ring+glow; non-match → dimmed. */
   highlight?: boolean;
   dim?: boolean;
-  /** This item is up for a live vote. */
   voting?: boolean;
-  /** This item's popover/detail is open. */
   selected?: boolean;
   dndEnabled?: boolean;
-  // Kept for the Phase-2 tier popover (edit/remove); unused in the card itself.
-  onEdit?: (item: Item) => void;
-  onRemove?: (id: string) => void;
 };
 
-/** 66px tier item: image or hue-initials swatch + name gradient. Click opens the
- *  tier popover (via onSelect); drag reorders / moves between tiers. */
+/** 66px tier item — image or hue-initials, name gradient, live/selected states. */
 export function ItemCard({
   item,
   listId,
@@ -55,7 +41,7 @@ export function ItemCard({
 }: ItemCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [closestEdge, setClosestEdge] = useState<Edge | null>(null);
+  const [edge, setEdge] = useState<Edge | null>(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -74,36 +60,31 @@ export function ItemCard({
         getData: ({ input, element }) =>
           attachClosestEdge({ ...data }, { input, element, allowedEdges: ["left", "right"] }),
         getIsSticky: () => true,
-        onDrag: ({ self, source }) => {
-          if (source.element === el) {
-            setClosestEdge(null);
-            return;
-          }
-          setClosestEdge(extractClosestEdge(self.data));
-        },
-        onDragLeave: () => setClosestEdge(null),
-        onDrop: () => setClosestEdge(null),
+        onDrag: ({ self, source }) =>
+          setEdge(source.element === el ? null : extractClosestEdge(self.data)),
+        onDragLeave: () => setEdge(null),
+        onDrop: () => setEdge(null),
       }),
     );
   }, [item.id, listId, dndEnabled]);
 
   return (
     <div className="relative shrink-0">
-      {closestEdge && (
+      {edge && (
         <div
           className={cn(
             "absolute -top-1 -bottom-1 z-10 w-[3px] rounded-full bg-foreground",
-            closestEdge === "left" ? "-left-1.5" : "-right-1.5",
+            edge === "left" ? "-left-1.5" : "-right-1.5",
           )}
         />
       )}
       <div
         ref={ref}
-        onClick={(e) => onSelect?.(item, e.currentTarget.getBoundingClientRect())}
         title={item.name}
+        onClick={(e) => onSelect?.(item, e.currentTarget.getBoundingClientRect())}
         className={cn(
-          "relative size-[66px] cursor-pointer overflow-hidden rounded-[4px] transition-opacity select-none",
-          dndEnabled && "cursor-grab active:cursor-grabbing",
+          "relative size-[66px] cursor-pointer overflow-hidden rounded-[4px] select-none",
+          dndEnabled && "active:cursor-grabbing",
           dragging && "opacity-40",
         )}
         style={{ boxShadow: "0 1px 4px rgba(0,0,0,.4)" }}
@@ -113,21 +94,17 @@ export function ItemCard({
         ) : (
           <div
             className="grid size-full place-items-center text-[17px] font-extrabold text-white"
-            style={{ background: swatchColor(item.name) }}
+            style={{ background: swatch(item.name) }}
           >
-            {initials(item.name)}
+            {item.name.slice(0, 2)}
           </div>
         )}
-
-        {/* name */}
         <div
           className="absolute inset-x-0 bottom-0 overflow-hidden px-[3px] py-[2px] text-center text-[9px] font-semibold text-ellipsis whitespace-nowrap text-white"
           style={{ background: "linear-gradient(transparent,rgba(7,8,12,.94))" }}
         >
           {item.name}
         </div>
-
-        {/* live vote */}
         {voting && (
           <>
             <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#FF4C3A_inset]" />
@@ -136,13 +113,10 @@ export function ItemCard({
             </span>
           </>
         )}
-        {/* selected (popover open) */}
         {selected && (
           <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#F5B942_inset]" />
         )}
-        {/* search dim */}
         {dim && <div className="pointer-events-none absolute inset-0 rounded-[4px] bg-[rgba(8,9,13,.7)]" />}
-        {/* search match */}
         {highlight && (
           <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#F5B942_inset,0_0_12px_rgba(245,182,66,.5)]" />
         )}

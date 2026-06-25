@@ -1,67 +1,43 @@
 import { FRAMES } from "@tier-list/shared";
-
 import { cn } from "@/lib/utils";
 
-function colorFor(name: string): string {
+function hueColor(name: string): string {
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return `hsl(${hash % 360}, 45%, 50%)`;
-}
-
-function initial(name: string): string {
-  const chars = Array.from(name.trim());
-  return chars[0]?.toUpperCase() ?? "?";
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return `hsl(${((hash % 360) + 360) % 360},40%,46%)`;
 }
 
 type AvatarProps = {
   name: string;
   src?: string | null;
-  size?: number;
-  /** Equipped frame perk id (decorates the avatar). */
+  /** Equipped frame perk id (e.g. "fr_holo") → applies its ring/border. */
   frame?: string;
+  size?: number;
   className?: string;
 };
 
-/** Circular avatar: image or colored initial, optionally with a frame decoration. */
-export function Avatar({ name, src, size = 32, frame, className }: AvatarProps) {
-  const frameDef = frame ? FRAMES[frame] : undefined;
-  const useDisc = frameDef?.disc;
-
+/** Square avatar: image or hue-initials. Optional equipped frame ring. */
+export function Avatar({ name, src, frame, size = 32, className }: AvatarProps) {
+  const frameClass = frame ? FRAMES[frame]?.className : undefined;
+  const inner = Math.round(size * 0.86);
   return (
     <span
-      className={cn("relative inline-grid shrink-0 place-items-center rounded-full", className)}
+      className={cn("grid shrink-0 place-items-center rounded-[3px]", frameClass, className)}
       style={{ width: size, height: size }}
     >
-      {useDisc && (
-        <span
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute -inset-[2.5px] rounded-full",
-            frameDef.className,
-          )}
-        />
-      )}
       <span
-        className={cn(
-          "relative inline-grid size-full place-items-center overflow-hidden rounded-full font-semibold text-white select-none",
-          frameDef && !useDisc && frameDef.className,
-        )}
-        style={{
-          fontSize: Math.round(size * 0.42),
-          backgroundColor: src ? "transparent" : colorFor(name),
-        }}
+        className="grid place-items-center overflow-hidden rounded-[2px]"
+        style={{ width: frameClass ? inner : size, height: frameClass ? inner : size }}
       >
         {src ? (
-          <img
-            src={src}
-            alt={name}
-            draggable={false}
-            className="size-full object-cover"
-          />
+          <img src={src} alt={name} className="size-full object-cover" draggable={false} />
         ) : (
-          initial(name)
+          <span
+            className="grid size-full place-items-center font-extrabold text-white"
+            style={{ background: hueColor(name), fontSize: Math.max(9, size * 0.42) }}
+          >
+            {name.trim().slice(0, 2) || "?"}
+          </span>
         )}
       </span>
     </span>

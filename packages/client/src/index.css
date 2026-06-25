@@ -683,3 +683,24 @@
   animation: shine 2.6s ease-in-out infinite;
   pointer-events: none;
 }
+
+/* --- Handoff design keyframes (added for fresh component rebuild) --- */
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes promoConfetti{0%{transform:translateY(-8vh) rotate(0);opacity:0;}12%{opacity:1;}100%{transform:translateY(96vh) rotate(540deg);opacity:.9;}}
+@keyframes promoPop{0%{transform:scale(.6);opacity:0;}55%{transform:scale(1.06);opacity:1;}100%{transform:scale(1);opacity:1;}}
+@keyframes badgeGlow{0%,100%{box-shadow:0 0 20px 1px var(--g,#F5B942);}50%{box-shadow:0 0 44px 9px var(--g,#F5B942);}}
+@keyframes ringExpand{from{transform:scale(.4);opacity:.65;}to{transform:scale(2.6);opacity:0;}}
+@keyframes meterFill{from{width:0;}}
+@keyframes floatY{from{transform:translate(0,0) rotate(0);}to{transform:translate(var(--dx,0),var(--dy,0)) rotate(var(--rot,360deg));}}
+@keyframes atkFlash{0%,100%{opacity:0;}50%{opacity:.5;}}
+@keyframes atkShake{0%{transform:translate(0,0);}25%{transform:translate(-7px,5px);}50%{transform:translate(6px,-6px);}75%{transform:translate(-5px,-4px);}100%{transform:translate(0,0);}}
+@keyframes slam{0%{transform:translateY(-30px) scale(.7);opacity:0;}60%{transform:translateY(4px) scale(1.05);opacity:1;}100%{transform:translateY(0) scale(1);opacity:1;}}
+@keyframes livePulse{0%,100%{box-shadow:0 0 0 0 rgba(255,76,58,.5);}50%{box-shadow:0 0 0 5px rgba(255,76,58,0);}}
+@keyframes drift1{0%{transform:translate(0,0);}50%{transform:translate(60px,40px);}100%{transform:translate(20px,90px);}}
+@keyframes drift2{0%{transform:translate(0,0);}50%{transform:translate(-50px,30px);}100%{transform:translate(-15px,70px);}}
+@keyframes badgeUp{0%{opacity:0;transform:translateY(4px) scale(.8);}30%{opacity:1;transform:none;}80%{opacity:1;}100%{opacity:0;}}
+@keyframes glitch{0%{transform:translate(0,0);}25%{transform:translate(-3px,1px);}50%{transform:translate(3px,-1px);}75%{transform:translate(-2px,-2px);}100%{transform:translate(0,0);}}
+@keyframes holoPan{from{background-position:0% 50%;}to{background-position:300% 50%;}}
+@keyframes glowPulse{0%,100%{box-shadow:0 0 10px 0 rgba(255,255,255,.3);}50%{box-shadow:0 0 22px 4px rgba(255,255,255,.55);}}
+@keyframes twinkle{0%,100%{opacity:.25;transform:scale(.7);}50%{opacity:1;transform:scale(1.15);}}
+@keyframes neonBorder{0%{box-shadow:0 0 0 2px #22D3EE,0 0 18px 2px rgba(34,211,238,.6);}33%{box-shadow:0 0 0 2px #A855F7,0 0 18px 2px rgba(168,85,247,.6);}66%{box-shadow:0 0 0 2px #EC4899,0 0 18px 2px rgba(236,72,153,.6);}100%{box-shadow:0 0 0 2px #22D3EE,0 0 18px 2px rgba(34,211,238,.6);}}

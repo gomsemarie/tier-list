@@ -1,0 +1,685 @@
+@import url("https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;600;700;900&family=Press+Start+2P&display=swap");
+@import url("https://cdn.jsdelivr.net/npm/galmuri/dist/galmuri.css");
+@import "tailwindcss";
+
+/* Scan the shared package so class names used there (e.g. superchat gradients) are generated. */
+@source "../../shared/src";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  /* Light (default) */
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #6b7280;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --border: #e6e7eb;
+  --input: #e4e4e7;
+  --ring: #6366f1;
+
+  --paper: #f6f7f9;
+  --paper-raised: #ffffff;
+  --line-strong: #d4d4d8;
+  --brand: #18181b;
+
+  /* Brand accents — surface colors stay vivid on both themes; *-fg are the
+     theme-aware text/icon variants so they stay legible. */
+  --indigo: #6366f1;
+  --indigo-fg: #4f46e5;
+  --amber: #f5b942;
+  --amber-fg: #b45309;
+  --teal: #3fc7b7;
+  --live: #ef4444;
+  --panel: #fafafa;
+  --panel-head: #f4f4f5;
+  --track: #e5e7eb;
+
+  --font-sans: "Noto Sans KR", system-ui, sans-serif;
+}
+
+/* Tierlab dark / retro-arcade theme (toggled via .dark on <html>) */
+.dark {
+  --background: #0b0d11;
+  --foreground: #edeae2;
+  --card: #11141b;
+  --card-foreground: #edeae2;
+  --popover: #11141b;
+  --popover-foreground: #edeae2;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+  --secondary: #171b22;
+  --secondary-foreground: #edeae2;
+  --muted: #13161d;
+  --muted-foreground: #8a8f9c;
+  --accent: #171b22;
+  --accent-foreground: #edeae2;
+  --destructive: #ef4444;
+  --border: #232934;
+  --input: #242a3a;
+  --ring: #6366f1;
+
+  --paper: #0e1117;
+  --paper-raised: #11141b;
+  --line-strong: #2a303c;
+  --brand: #edeae2;
+
+  --indigo: #6366f1;
+  --indigo-fg: #a5b4fc;
+  --amber: #f5b942;
+  --amber-fg: #f5b942;
+  --teal: #3fc7b7;
+  --live: #ff4c3a;
+  --panel: #0d1015;
+  --panel-head: #101319;
+  --track: #1b1f27;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-line-strong: var(--line-strong);
+  --color-indigo: var(--indigo);
+  --color-indigo-fg: var(--indigo-fg);
+  --color-amber: var(--amber);
+  --color-amber-fg: var(--amber-fg);
+  --color-teal: var(--teal);
+  --color-live: var(--live);
+  --color-panel: var(--panel);
+  --color-panel-head: var(--panel-head);
+  --color-track: var(--track);
+  --font-sans: var(--font-sans);
+  --font-pixel: "Galmuri11", "Noto Sans KR", sans-serif;
+  --font-arcade: "Press Start 2P", "Galmuri11", monospace;
+  --font-display: "Black Han Sans", "Noto Sans KR", sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: var(--amber);
+    color: #1a1206;
+  }
+
+  /* Dark retro scrollbar */
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #262b36;
+    border-radius: 2px;
+    border: 2px solid var(--background);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #353c49;
+  }
+}
+
+@layer utilities {
+  .label-caps {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 0.6875rem;
+    font-weight: 700;
+  }
+
+  /* Retro/arcade font helpers (design uses these on votes, tier letters, effects). */
+  .font-pixel {
+    font-family: var(--font-pixel);
+  }
+  .font-arcade {
+    font-family: var(--font-arcade);
+  }
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* Hard pixel border + offset shadow — the retro card look. */
+  .retro-border {
+    border: 2px solid #000;
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+  }
+  .retro-border-sm {
+    border: 2px solid #000;
+    box-shadow: 2px 2px 0 #000;
+  }
+
+  /* White tier letters, legible on any tier color. */
+  .tier-letter {
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Elevation on dark. */
+  .shadow-soft {
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      0 6px 20px rgba(0, 0, 0, 0.35);
+  }
+  .shadow-card {
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.4),
+      0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+  .shadow-pop {
+    box-shadow:
+      0 10px 34px rgba(0, 0, 0, 0.5),
+      0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.5s cubic-bezier(0.22, 0.7, 0.25, 1) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease both;
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.32s cubic-bezier(0.22, 0.7, 0.25, 1) both;
+}
+
+/* Diagonal light sweep for superchat messages. */
+@keyframes shine {
+  0% {
+    transform: translateX(-150%) skewX(-20deg);
+  }
+  55%,
+  100% {
+    transform: translateX(320%) skewX(-20deg);
+  }
+}
+
+/* --- Admin attack hit effect --- */
+@keyframes attack-flash {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.attack-flash {
+  animation: attack-flash 0.16s linear infinite;
+}
+.attack-vignette {
+  box-shadow: inset 0 0 160px 50px rgba(220, 38, 38, 0.85);
+  animation: attack-flash 0.28s linear infinite;
+}
+@keyframes attack-shake {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  20% {
+    transform: translate(-9px, 7px) rotate(-2deg);
+  }
+  40% {
+    transform: translate(8px, -6px) rotate(2deg);
+  }
+  60% {
+    transform: translate(-7px, -7px) rotate(-1.5deg);
+  }
+  80% {
+    transform: translate(7px, 6px) rotate(1.5deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+.attack-shake {
+  animation: attack-shake 0.22s linear infinite;
+}
+@keyframes attack-bounce {
+  0% {
+    transform: scale(0.4) rotate(-8deg);
+    opacity: 0;
+  }
+  25% {
+    transform: scale(1.25) rotate(5deg);
+    opacity: 1;
+  }
+  40% {
+    transform: scale(1) rotate(-3deg);
+  }
+  100% {
+    transform: scale(1.05) rotate(2deg);
+  }
+}
+.attack-bounce {
+  animation: attack-bounce 0.5s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+
+/* Items flying chaotically around the screen during an attack. */
+.attack-floater {
+  position: absolute;
+  animation: attack-float var(--dur, 1.1s) ease-in-out var(--delay, 0s) infinite
+    alternate;
+  will-change: transform;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.4));
+}
+@keyframes attack-float {
+  from {
+    transform: translate(0, 0) rotate(0deg) scale(var(--scale, 1));
+  }
+  to {
+    transform: translate(var(--dx, 0), var(--dy, 0)) rotate(var(--rot, 360deg))
+      scale(var(--scale, 1));
+  }
+}
+
+/* --- Promotion RANK UP arcade effect --- */
+@keyframes barsMove {
+  from {
+    transform: translateX(-88px);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes colorPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes pixFall {
+  from {
+    transform: translateY(-10vh);
+  }
+  to {
+    transform: translateY(115vh);
+  }
+}
+@keyframes pixBounce {
+  0% {
+    transform: scale(0);
+  }
+  55% {
+    transform: scale(1.18);
+  }
+  78% {
+    transform: scale(0.92);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes colorBlink {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.65);
+  }
+}
+@keyframes rankFlash {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+@keyframes starBurst {
+  0% {
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--bx)), calc(-50% + var(--by))) scale(1);
+    opacity: 0;
+  }
+}
+@keyframes crtFlicker {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* --- Pixel blink (LIVE dot in vote card) --- */
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* --- Popover pop-in --- */
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- LIVE pulse dot --- */
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
+}
+
+/* --- Vote result promotion effect --- */
+@keyframes promo-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.promo-pop {
+  animation: promo-pop 0.5s cubic-bezier(0.2, 1.3, 0.3, 1) both;
+}
+@keyframes promo-confetti {
+  0% {
+    transform: translateY(-8vmin) rotate(0deg);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(46vmin) rotate(420deg);
+    opacity: 0.95;
+  }
+}
+.promo-confetti {
+  position: absolute;
+  top: 0;
+  animation: promo-confetti var(--dur, 2.6s) ease-in var(--delay, 0s) forwards;
+}
+
+/* --- Moderation broadcast effect (center-top game banner) --- */
+@keyframes mod-slam {
+  0% {
+    transform: translateY(-48px) scale(0.55);
+    opacity: 0;
+  }
+  55% {
+    transform: translateY(7px) scale(1.09);
+    opacity: 1;
+  }
+  72% {
+    transform: translateY(-3px) scale(0.97);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+.mod-slam {
+  animation: mod-slam 0.52s cubic-bezier(0.2, 1.35, 0.3, 1) both;
+}
+@keyframes mod-ring {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+.mod-ring {
+  animation: mod-ring 0.85s ease-out forwards;
+}
+@keyframes mod-out {
+  to {
+    transform: translateY(-16px) scale(0.92);
+    opacity: 0;
+  }
+}
+.mod-out {
+  animation: mod-out 0.4s ease-in forwards;
+}
+
+/* --- Self ban warning frame --- */
+@keyframes ban-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 3px rgba(239, 68, 68, 0.35),
+      inset 0 0 40px rgba(239, 68, 68, 0.15);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 6px rgba(239, 68, 68, 0.9),
+      inset 0 0 75px rgba(239, 68, 68, 0.45);
+  }
+}
+.ban-warning {
+  animation: ban-pulse 1.1s ease-in-out infinite;
+}
+
+/* --- Superchat style effects (escalate with rarity) --- */
+.sc-pan {
+  background-size: 200% 100%;
+  animation: sc-pan 4s ease-in-out infinite alternate;
+}
+@keyframes sc-pan {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+.sc-glow-gold {
+  box-shadow: 0 0 14px 0 rgba(245, 158, 11, 0.55);
+}
+.sc-glow-neon {
+  box-shadow:
+    0 0 16px 1px rgba(34, 211, 238, 0.55),
+    inset 0 0 0 1px rgba(34, 211, 238, 0.45);
+}
+.sc-neon-text {
+  color: #67e8f9;
+  text-shadow: 0 0 8px rgba(34, 211, 238, 0.9);
+}
+/* Legendary: panning gradient + pulsing glow at once. */
+.sc-legendary {
+  background-size: 200% 100%;
+  animation:
+    sc-pan 4s ease-in-out infinite alternate,
+    sc-glow-pulse 1.8s ease-in-out infinite;
+}
+@keyframes sc-glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px 0 rgba(255, 255, 255, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 24px 4px rgba(255, 255, 255, 0.5);
+  }
+}
+
+/* --- Avatar frame decorations (escalate with rarity) --- */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.frame-gold {
+  box-shadow:
+    0 0 0 2px #f59e0b,
+    0 0 5px 1px rgba(245, 158, 11, 0.55);
+}
+.frame-neon {
+  animation: frame-neon-pulse 1.6s ease-in-out infinite;
+}
+@keyframes frame-neon-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 2px #22d3ee,
+      0 0 6px 1px rgba(34, 211, 238, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px #22d3ee,
+      0 0 14px 3px rgba(34, 211, 238, 0.95);
+  }
+}
+.frame-rainbow {
+  background: conic-gradient(
+    from 0deg,
+    #f43f5e,
+    #f59e0b,
+    #eab308,
+    #22c55e,
+    #06b6d4,
+    #6366f1,
+    #a855f7,
+    #f43f5e
+  );
+  animation: spin 3.5s linear infinite;
+}
+.frame-flame {
+  background: conic-gradient(from 0deg, #fbbf24, #f97316, #ef4444, #f97316, #fbbf24);
+  box-shadow: 0 0 9px 2px rgba(249, 115, 22, 0.7);
+  animation: spin 2.2s linear infinite;
+}
+.frame-holo {
+  background: conic-gradient(
+    from 0deg,
+    #f43f5e,
+    #f59e0b,
+    #eab308,
+    #22c55e,
+    #06b6d4,
+    #6366f1,
+    #a855f7,
+    #f43f5e
+  );
+  box-shadow: 0 0 12px 2px rgba(168, 85, 247, 0.7);
+  animation: spin 2s linear infinite;
+}
+
+.super-shine::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.4),
+    transparent
+  );
+  animation: shine 2.6s ease-in-out infinite;
+  pointer-events: none;
+}

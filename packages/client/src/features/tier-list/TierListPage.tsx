@@ -568,8 +568,18 @@ export function TierListPage() {
         <RoomDialog
           rooms={room.roomList}
           nickname={room.authUser.nickname}
+          myId={room.authUser.id}
+          isAdmin={room.authUser.isAdmin}
           error={room.error}
           onRefresh={room.listRooms}
+          onRename={(id, title) => {
+            room.renameRoom(id, title);
+            room.listRooms();
+          }}
+          onDelete={(id) => {
+            room.deleteRoom(id);
+            room.listRooms();
+          }}
           onJoin={(c) => {
             room.clearError();
             room.joinRoom(c);

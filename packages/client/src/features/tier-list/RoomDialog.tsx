@@ -1,24 +1,41 @@
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 
 import type { RoomSummary } from "@tier-list/shared";
 
 type RoomDialogProps = {
   rooms: RoomSummary[];
   nickname: string;
+  myId?: string;
+  isAdmin?: boolean;
   error?: string | null;
   onRefresh: () => void;
   onJoin: (code: string) => void;
   onCreate: (title: string, isPublic: boolean) => void;
+  onRename: (roomId: string, title: string) => void;
+  onDelete: (roomId: string) => void;
   onClose: () => void;
 };
 
 /** Lobby: public room list + code-join, with an inline create view. */
-export function RoomDialog({ rooms, nickname, error, onRefresh, onJoin, onCreate, onClose }: RoomDialogProps) {
+export function RoomDialog({
+  rooms,
+  nickname,
+  myId,
+  isAdmin,
+  error,
+  onRefresh,
+  onJoin,
+  onCreate,
+  onRename,
+  onDelete,
+  onClose,
+}: RoomDialogProps) {
   const [code, setCode] = useState("");
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [isPublic, setIsPublic] = useState(true);
+  const [menuId, setMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     onRefresh();
@@ -146,15 +163,22 @@ export function RoomDialog({ rooms, nickname, error, onRefresh, onJoin, onCreate
                     공개된 방이 없습니다 — 새 방을 만들어 보세요.
                   </div>
                 ) : (
-                  rooms.map((r) => (
+                  rooms.map((r) => {
+                    const mine = (!!myId && r.ownerId === myId) || !!isAdmin;
+                    return (
                     <div
                       key={r.id}
-                      className="flex items-center gap-[13px] rounded-[8px] border border-[#232934] bg-[#0E1117] px-[15px] py-[13px]"
+                      className="relative flex items-center gap-[13px] rounded-[8px] border border-[#232934] bg-[#0E1117] px-[15px] py-[13px]"
                     >
                       <div className="flex flex-1 flex-col gap-[3px]">
                         <div className="flex items-center gap-2">
                           <span className="size-[7px] rounded-full bg-[#5BD3A0]" />
                           <span className="text-[14px] font-bold text-[#EDEAE2]">{r.title}</span>
+                          {mine && (
+                            <span className="rounded-[5px] bg-[rgba(99,102,241,.16)] px-1.5 py-0.5 text-[10px] font-bold text-[#A5B4FC]">
+                              내 방
+                            </span>
+                          )}
                           {!r.isPublic && (
                             <span className="rounded-[3px] border border-[#2A303C] px-1.5 py-px text-[9px] font-bold text-[#8A8F9C]">
                               비공개
@@ -174,8 +198,47 @@ export function RoomDialog({ rooms, nickname, error, onRefresh, onJoin, onCreate
                       >
                         입장
                       </button>
+                      {mine && (
+                        <button
+                          type="button"
+                          aria-label="방 관리"
+                          onClick={() => setMenuId((v) => (v === r.id ? null : r.id))}
+                          className="grid size-[38px] place-items-center rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[#C4C8D2]"
+                        >
+                          <MoreHorizontal className="size-4" />
+                        </button>
+                      )}
+                      {menuId === r.id && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setMenuId(null)} />
+                          <div className="absolute top-[54px] right-3.5 z-20 w-[152px] rounded-[8px] border border-[#2A3142] bg-[#13161D] p-1.5 shadow-[0_14px_40px_rgba(0,0,0,.6)]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMenuId(null);
+                                const t = window.prompt("새 방 이름", r.title)?.trim();
+                                if (t && t !== r.title) onRename(r.id, t);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#D5D8E2] hover:bg-[#1B2029]"
+                            >
+                              <Pencil className="size-3.5" /> 이름 변경
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMenuId(null);
+                                if (window.confirm(`'${r.title}' 방을 삭제할까요?`)) onDelete(r.id);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#F87171] hover:bg-[#1B2029]"
+                            >
+                              <Trash2 className="size-3.5" /> 방 삭제
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </>

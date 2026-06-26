@@ -9,8 +9,10 @@ import { isCardData, isListData } from "./dnd";
 import { AccountDialog } from "./AccountDialog";
 import { AttackEffect, type AttackItem } from "./AttackEffect";
 import { AuthDialog } from "./AuthDialog";
+import { Avatar } from "./Avatar";
 import { BanWarningFrame } from "./BanWarningFrame";
 import { BulkAddDialog } from "./BulkAddDialog";
+import { HintToast } from "./HintToast";
 import { ItemFormDialog } from "./ItemFormDialog";
 import { ItemPool } from "./ItemPool";
 import { LivePanel } from "./LivePanel";
@@ -62,6 +64,10 @@ export function TierListPage() {
   useEffect(() => {
     if (inRoom) setLobby(false);
   }, [inRoom]);
+
+  const myMember = room.room?.members.find((m) => m.userId === room.authUser?.id);
+  const canModerate =
+    !!room.authUser && (room.authUser.isAdmin || myMember?.role === "owner" || myMember?.role === "admin");
 
   // Show the RANK UP effect once when a vote resolves into an upward move
   // (opt-out members see the compact mini-result via QuickVoteBar instead).
@@ -157,8 +163,32 @@ export function TierListPage() {
             <span className="h-[3px] w-[42%] rounded-sm bg-teal" />
           </span>
           <span className="text-[15px] font-extrabold tracking-tight">티어리스트</span>
-          <span className="text-[11px] text-muted-foreground">로컬 편집 · 브라우저 저장</span>
+          {!room.room && <span className="text-[11px] text-muted-foreground">로컬 편집 · 브라우저 저장</span>}
         </div>
+
+        {room.room && (
+          <>
+            <span className="h-[22px] w-px bg-border" />
+            <div className="flex items-center">
+              {room.room.members.slice(0, 5).map((m, i) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  title={m.name}
+                  onClick={() => setMemberView(m)}
+                  className="-ml-2 rounded-md ring-2 ring-panel-head transition-transform first:ml-0 hover:z-10 hover:-translate-y-0.5"
+                  style={{ zIndex: 5 - i }}
+                >
+                  <Avatar name={m.name} src={m.avatar} frame={m.frame} size={26} />
+                </button>
+              ))}
+              <span className="ml-2 text-[12px] font-semibold text-muted-foreground">
+                {room.room.members.length}명
+              </span>
+            </div>
+          </>
+        )}
+
         <div className="flex-1" />
         <span
           title={`서버 ${STATUS_META[room.status].label}`}
@@ -197,8 +227,9 @@ export function TierListPage() {
             <button
               type="button"
               onClick={() => setAcct((v) => !v)}
-              className="h-[34px] rounded-md border border-border bg-card px-3 text-[13px] font-bold text-foreground"
+              className="flex h-[34px] items-center gap-1.5 rounded-md border border-border bg-card pr-3 pl-1.5 text-[13px] font-bold text-foreground"
             >
+              <Avatar name={room.authUser.nickname} src={room.authUser.avatar} frame={room.authUser.frame} size={22} />
               {room.authUser.nickname}
             </button>
             {acct && (
@@ -247,18 +278,6 @@ export function TierListPage() {
           className="flex h-[34px] items-center gap-1.5 rounded-md bg-indigo px-3.5 text-[13px] font-bold text-white"
         >
           <Plus className="size-4" /> 대상 추가
-        </button>
-        <button
-          type="button"
-          title="승급 효과 미리보기"
-          onClick={() => {
-            const t = state.tiers[0];
-            const sample = Object.values(state.items)[0]?.name ?? "샘플";
-            if (t) setPromo({ itemName: sample, tier: { label: t.label, color: t.color, epithet: t.epithet ?? "" } });
-          }}
-          className="hidden h-[34px] rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-muted-foreground hover:text-foreground sm:block"
-        >
-          승급 효과
         </button>
         <button
           type="button"
@@ -379,9 +398,11 @@ export function TierListPage() {
            canSuper={
              !!room.authUser?.scStyle && room.authUser.unlocked.includes(room.authUser.scStyle)
            }
+           canModerate={canModerate}
            setVoteOptOut={room.setVoteOptOut}
            onCast={room.castVote}
            onSend={room.sendChat}
+           onClearChat={() => room.moderate("clearChat")}
            onOpenMember={setMemberView}
          />
        )}
@@ -466,6 +487,7 @@ export function TierListPage() {
           onEquip={room.equipPerk}
           onRedeem={room.redeemCode}
           onIssueCode={room.issueCode}
+          onFetchCodes={room.fetchCodes}
           onLogout={() => {
             setAccount(false);
             room.logout();
@@ -479,9 +501,6 @@ export function TierListPage() {
       )}
 
       {memberView && room.room && room.authUser && (() => {
-        const me = room.room.members.find((m) => m.userId === room.authUser!.id);
-        const myRole = me?.role;
-        const canModerate = room.authUser.isAdmin || myRole === "owner" || myRole === "admin";
         const canAttack = canModerate || room.authUser.unlocked.includes("attack");
         const live = room.room.members.find((m) => m.userId === memberView.userId) ?? memberView;
         const isSelf = memberView.userId === room.authUser.id;
@@ -547,6 +566,8 @@ export function TierListPage() {
           />
         ) : null;
       })()}
+
+      <HintToast hints={room.hints} />
 
       {voteFor && (
         <StartVoteDialog

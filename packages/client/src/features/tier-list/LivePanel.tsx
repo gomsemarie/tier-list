@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, History, MessagesSquare, Send, Sparkles } from "lucide-react";
+import { ChevronRight, Eraser, History, MessagesSquare, Send, Sparkles } from "lucide-react";
 
 import { SC_STYLES } from "@tier-list/shared";
 import type { ChangeEntry, ChatMessage, Member, VoteSnapshot } from "@tier-list/shared";
@@ -13,9 +13,11 @@ type LivePanelProps = {
   activeVote: VoteSnapshot | null;
   voteOptOut: boolean;
   canSuper: boolean;
+  canModerate: boolean;
   setVoteOptOut: (enabled: boolean) => void;
   onCast: (tierId: string) => void;
   onSend: (text: string) => void;
+  onClearChat: () => void;
   onOpenMember: (member: Member) => void;
 };
 
@@ -47,9 +49,11 @@ export function LivePanel({
   activeVote,
   voteOptOut,
   canSuper,
+  canModerate,
   setVoteOptOut,
   onCast,
   onSend,
+  onClearChat,
   onOpenMember,
 }: LivePanelProps) {
   const [open, setOpen] = useState(true);
@@ -108,6 +112,17 @@ export function LivePanel({
           <span className="size-[6px] rounded-full" style={{ background: voteOptOut ? "#6A707E" : "#5BD3A0" }} />
           {voteOptOut ? "미참여" : "참여"}
         </button>
+        {canModerate && (
+          <button
+            type="button"
+            onClick={() => window.confirm("채팅을 모두 초기화할까요?") && onClearChat()}
+            aria-label="채팅 초기화"
+            title="채팅 초기화 (방장·관리자)"
+            className="grid size-6 place-items-center rounded-[5px] border border-[#2A303C] bg-[#171B22] text-[#8A8F9C] hover:text-[#F87171]"
+          >
+            <Eraser className="size-3.5" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setOpen(false)}

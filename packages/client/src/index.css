@@ -667,6 +667,10 @@
   box-shadow: 0 0 12px 2px rgba(168, 85, 247, 0.7);
   animation: spin 2s linear infinite;
 }
+/* Hold the frame still (used on inline avatars; spin shows only on the profile preview). */
+.frame-still {
+  animation: none !important;
+}
 
 .super-shine::after {
   content: "";

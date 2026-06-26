@@ -13,16 +13,18 @@ type AvatarProps = {
   /** Equipped frame perk id (e.g. "fr_holo") → applies its ring/border. */
   frame?: string;
   size?: number;
+  /** Disc frames spin by default; pass false to hold them still (e.g. pickers). */
+  spin?: boolean;
   className?: string;
 };
 
 /** Square avatar: image or hue-initials. Optional equipped frame ring. */
-export function Avatar({ name, src, frame, size = 32, className }: AvatarProps) {
+export function Avatar({ name, src, frame, size = 32, spin = true, className }: AvatarProps) {
   const frameClass = frame ? FRAMES[frame]?.className : undefined;
   const inner = Math.round(size * 0.86);
   return (
     <span
-      className={cn("grid shrink-0 place-items-center rounded-[3px]", frameClass, className)}
+      className={cn("grid shrink-0 place-items-center rounded-[3px]", frameClass, !spin && "frame-still", className)}
       style={{ width: size, height: size }}
     >
       <span

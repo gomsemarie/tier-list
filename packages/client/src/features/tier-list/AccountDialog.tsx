@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import { FRAMES, PERKS, RARITY_META, SC_STYLES } from "@tier-list/shared";
-import type { AuthUser, IssueCodeResult, RedeemResult, UpdateResult } from "@tier-list/shared";
+import type { AuthUser, CodeInfo, IssueCodeResult, RedeemResult, UpdateResult } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
 
 type AccountDialogProps = {
@@ -11,18 +11,33 @@ type AccountDialogProps = {
   onEquip: (patch: { frame?: string; scStyle?: string }) => Promise<UpdateResult>;
   onRedeem: (code: string) => Promise<RedeemResult>;
   onIssueCode: (perks: string[]) => Promise<IssueCodeResult>;
+  onFetchCodes: () => Promise<CodeInfo[]>;
   onLogout: () => void;
   onClose: () => void;
 };
 
 /** 계정 관리: nickname, equipped frame / superchat style, code redemption. */
-export function AccountDialog({ user, onUpdateProfile, onEquip, onRedeem, onIssueCode, onLogout, onClose }: AccountDialogProps) {
+export function AccountDialog({
+  user,
+  onUpdateProfile,
+  onEquip,
+  onRedeem,
+  onIssueCode,
+  onFetchCodes,
+  onLogout,
+  onClose,
+}: AccountDialogProps) {
   const [nickname, setNickname] = useState(user.nickname);
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [issuePerks, setIssuePerks] = useState<Set<string>>(new Set());
   const [issued, setIssued] = useState<string | null>(null);
+  const [codes, setCodes] = useState<CodeInfo[]>([]);
+
+  useEffect(() => {
+    if (user.isAdmin) void onFetchCodes().then(setCodes);
+  }, [user.isAdmin, onFetchCodes]);
 
   async function issue() {
     if (issuePerks.size === 0) return;
@@ -32,6 +47,7 @@ export function AccountDialog({ user, onUpdateProfile, onEquip, onRedeem, onIssu
     if (res.ok) {
       setIssued(res.code.code);
       setIssuePerks(new Set());
+      void onFetchCodes().then(setCodes);
     } else {
       setMsg({ ok: false, text: res.error ?? "코드 발급 실패" });
     }
@@ -45,7 +61,8 @@ export function AccountDialog({ user, onUpdateProfile, onEquip, onRedeem, onIssu
     setBusy(true);
     const res = await onUpdateProfile({ nickname: n });
     setBusy(false);
-    setMsg(res.ok ? { ok: true, text: "저장했습니다." } : { ok: false, text: res.error ?? "저장 실패" });
+    if (res.ok) onClose();
+    else setMsg({ ok: false, text: res.error ?? "저장 실패" });
   }
 
   async function redeem() {
@@ -98,11 +115,11 @@ export function AccountDialog({ user, onUpdateProfile, onEquip, onRedeem, onIssu
           <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 아바타 프레임</label>
           <div className="mb-4 flex flex-wrap gap-2">
             <FrameOption selected={!user.frame} onClick={() => onEquip({ frame: "" })}>
-              <Avatar name={user.nickname} src={user.avatar} size={34} />
+              <Avatar name={user.nickname} src={user.avatar} size={34} spin={false} />
             </FrameOption>
             {ownedFrames.map((id) => (
               <FrameOption key={id} selected={user.frame === id} title={FRAMES[id].name} onClick={() => onEquip({ frame: id })}>
-                <Avatar name={user.nickname} src={user.avatar} frame={id} size={34} />
+                <Avatar name={user.nickname} src={user.avatar} frame={id} size={34} spin={false} />
               </FrameOption>
             ))}
             {ownedFrames.length === 0 && (
@@ -213,6 +230,34 @@ export function AccountDialog({ user, onUpdateProfile, onEquip, onRedeem, onIssu
               {issued && (
                 <div className="mt-2 rounded-[6px] border border-[#2A303C] bg-[#0E1117] px-3 py-2 text-center font-mono text-[14px] font-bold tracking-[2px] text-[#EDEAE2] select-all">
                   {issued}
+                </div>
+              )}
+
+              {codes.length > 0 && (
+                <div className="mt-3 flex max-h-[160px] flex-col gap-1.5 overflow-y-auto">
+                  {codes.map((c) => (
+                    <div
+                      key={c.code}
+                      className="flex items-center gap-2 rounded-[6px] border border-[#232934] bg-[#0E1117] px-2.5 py-1.5"
+                    >
+                      <span className="font-mono text-[12px] font-bold tracking-[1px] text-[#EDEAE2] select-all">{c.code}</span>
+                      <span className="flex-1 truncate text-[10px] text-[#8A8F9C]" title={c.perks.join(", ")}>
+                        {c.perks.join(", ")}
+                      </span>
+                      <span
+                        className="shrink-0 rounded-[4px] px-1.5 py-px text-[10px] font-bold"
+                        style={
+                          c.usedBy
+                            ? { background: "rgba(239,68,68,.12)", color: "#F87171" }
+                            : !c.singleUse
+                              ? { background: "rgba(99,102,241,.14)", color: "#A5B4FC" }
+                              : { background: "rgba(91,211,160,.12)", color: "#5BD3A0" }
+                        }
+                      >
+                        {c.usedBy ? `사용됨 · ${c.usedBy}` : c.singleUse ? "미사용" : "재사용"}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

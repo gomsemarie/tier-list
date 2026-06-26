@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ImagePlus, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import type { RoomSummary } from "@tier-list/shared";
@@ -279,8 +280,9 @@ export function RoomDialog({
                           <MoreHorizontal className="size-4" />
                         </button>
                       )}
-                      {menu?.id === r.id && (
-                        <>
+                      {menu?.id === r.id &&
+                        createPortal(
+                          <>
                           <div className="fixed inset-0 z-[62]" onClick={() => setMenu(null)} />
                           <div
                             className="fixed z-[63] w-[160px] rounded-[8px] border border-[#2A3142] bg-[#13161D] p-1.5 shadow-[0_14px_40px_rgba(0,0,0,.6)]"
@@ -329,8 +331,9 @@ export function RoomDialog({
                               <Trash2 className="size-3.5" /> 방 삭제
                             </button>
                           </div>
-                        </>
-                      )}
+                          </>,
+                          document.body,
+                        )}
                     </div>
                     );
                   })

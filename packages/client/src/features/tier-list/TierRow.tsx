@@ -7,6 +7,12 @@ import { ItemCard } from "./ItemCard";
 import { isCardData, type ListData } from "./dnd";
 import type { Item, Tier } from "@tier-list/shared";
 
+/** Emblem label can be up to 4 chars — shrink so it fits the 84px emblem. */
+function emblemFont(label: string): number {
+  const n = [...label].length;
+  return n <= 2 ? 32 : n === 3 ? 25 : 20;
+}
+
 type TierRowProps = {
   tier: Tier;
   items: Item[];
@@ -71,8 +77,8 @@ export function TierRow({
           onChange={(e) => onRelabel(tier.id, e.target.value)}
           aria-label="티어 이름"
           maxLength={4}
-          className="font-display w-full bg-transparent text-center text-[32px] leading-none text-white caret-white outline-none"
-          style={{ textShadow: "0 1px 3px rgba(0,0,0,.4)" }}
+          className="font-display w-full truncate bg-transparent text-center leading-none text-white caret-white outline-none"
+          style={{ fontSize: emblemFont(tier.label), textShadow: "0 1px 3px rgba(0,0,0,.4)" }}
         />
         <input
           value={tier.epithet ?? ""}

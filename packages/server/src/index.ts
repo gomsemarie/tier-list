@@ -13,6 +13,7 @@ import { perkById, rolePriority, VOTE_ABSTAIN } from "@tier-list/shared";
 import type {
   AuthResult,
   AuthUser,
+  ChangeEntry,
   ChatKind,
   ChatMessage,
   CodeInfo,
@@ -59,6 +60,8 @@ type Room = {
   isPublic: boolean;
   state: TierListState;
   messages: ChatMessage[];
+  /** Recent tier moves for the live "변경 이력" panel (in-memory, not persisted). */
+  history: ChangeEntry[];
   members: Map<
     string,
     {
@@ -232,6 +235,7 @@ for (const persisted of loadAllRooms()) {
     isPublic: persisted.isPublic,
     state: persisted.state,
     messages: persisted.messages,
+    history: [],
     members: new Map(),
     mutes: new Map(),
     placeBans: new Map(),
@@ -309,6 +313,7 @@ function snapshot(room: Room): RoomSnapshot {
     state: room.state,
     messages: room.messages,
     members,
+    history: room.history,
   };
 }
 
@@ -1305,6 +1310,7 @@ io.on("connection", (socket: Socket) => {
         isPublic: isPublic !== false, // default public
         state: createInitialState(),
         messages: [],
+        history: [],
         members: new Map(),
         mutes: new Map(),
         placeBans: new Map(),
@@ -1511,6 +1517,22 @@ io.on("connection", (socket: Socket) => {
           ? { ...action, by: name, ts: Date.now() }
           : action;
     room.state = tierListReducer(room.state, stamped);
+    // Record tier moves (into a real tier, not the pool) for the 변경 이력 panel.
+    if (action.type === "moveItem") {
+      const tier = room.state.tiers.find((t) => t.id === action.targetListId);
+      const item = room.state.items[action.itemId];
+      if (tier && item) {
+        room.history.unshift({
+          id: crypto.randomUUID(),
+          actor: name,
+          itemName: item.name,
+          toLabel: tier.label,
+          toColor: tier.color,
+          ts: Date.now(),
+        });
+        room.history = room.history.slice(0, 20);
+      }
+    }
     broadcast(io, room);
   });
 

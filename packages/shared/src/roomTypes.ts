@@ -63,6 +63,16 @@ export type ModeratePayload = {
   seconds?: number;
 };
 
+/** A recent tier change for the live "변경 이력" panel (in-memory, not persisted). */
+export type ChangeEntry = {
+  id: string;
+  actor: string;
+  itemName: string;
+  toLabel: string;
+  toColor: string;
+  ts: number;
+};
+
 /** Full room snapshot broadcast to every member on any change. */
 export type RoomSnapshot = {
   id: string;
@@ -71,6 +81,8 @@ export type RoomSnapshot = {
   state: TierListState;
   messages: ChatMessage[];
   members: Member[];
+  /** Recent tier moves (most recent first); optional for back-compat. */
+  history?: ChangeEntry[];
 };
 
 /** Lightweight room info for the lobby list. */

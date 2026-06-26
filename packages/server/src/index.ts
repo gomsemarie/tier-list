@@ -1347,7 +1347,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("room:rename", ({ roomId, title }: { roomId?: string; title?: string }) => {
     const room = rooms.get(String(roomId ?? "").toUpperCase().trim());
     if (!room) return;
-    if (!authedUser || room.ownerId !== authedUser.id) {
+    if (!authedUser || (room.ownerId !== authedUser.id && !authedUser.isAdmin)) {
       socket.emit("room:error", "내가 만든 방만 관리할 수 있어요.");
       return;
     }
@@ -1360,7 +1360,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("room:setImage", ({ roomId, image }: { roomId?: string; image?: string }) => {
     const room = rooms.get(String(roomId ?? "").toUpperCase().trim());
     if (!room) return;
-    if (!authedUser || room.ownerId !== authedUser.id) {
+    if (!authedUser || (room.ownerId !== authedUser.id && !authedUser.isAdmin)) {
       socket.emit("room:error", "내가 만든 방만 관리할 수 있어요.");
       return;
     }

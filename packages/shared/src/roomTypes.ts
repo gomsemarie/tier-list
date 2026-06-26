@@ -39,6 +39,10 @@ export type Member = {
   mutedUntil?: number;
   placeBannedUntil?: number;
   voteBannedUntil?: number;
+  /** Original duration (ms) of each active ban, for the depleting timer ring. */
+  mutedFor?: number;
+  placeBannedFor?: number;
+  voteBannedFor?: number;
 };
 
 export type ModerateActionType =

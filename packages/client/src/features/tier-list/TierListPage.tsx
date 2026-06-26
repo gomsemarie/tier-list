@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { monitorForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { extractClosestEdge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { ArrowDownAZ, LogOut, Palette, Plus, RotateCcw, Search as SearchIcon, UserCog, Users } from "lucide-react";
+import {
+  ArrowDownAZ,
+  ChevronDown,
+  ChevronUp,
+  LogOut,
+  Palette,
+  Plus,
+  RotateCcw,
+  Search as SearchIcon,
+  Trophy,
+  UserCog,
+  Users,
+} from "lucide-react";
 
 import { POOL_ID, TIER_COLORS } from "@tier-list/shared";
 import type { Item, Member } from "@tier-list/shared";
@@ -18,6 +30,7 @@ import { ItemPool } from "./ItemPool";
 import { LivePanel } from "./LivePanel";
 import { MemberOverlay } from "./MemberOverlay";
 import { MiniResult } from "./MiniResult";
+import { PresenceAvatar } from "./PresenceAvatar";
 import { ModerationEffect } from "./ModerationEffect";
 import { PromotionEffect } from "./PromotionEffect";
 import { QuickVoteBar } from "./QuickVoteBar";
@@ -47,6 +60,7 @@ export function TierListPage() {
 
   const [search, setSearch] = useState("");
   const [sortAZ, setSortAZ] = useState(false);
+  const [topN, setTopN] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
   const [menu, setMenu] = useState<{ item: Item; anchor: DOMRect } | null>(null);
   const [form, setForm] = useState<{ item?: Item } | null>(null);
@@ -57,6 +71,7 @@ export function TierListPage() {
   const [acct, setAcct] = useState(false);
   const [account, setAccount] = useState(false);
   const [memberView, setMemberView] = useState<Member | null>(null);
+  const [attackCd, setAttackCd] = useState<Record<string, number>>({});
   const [promo, setPromo] = useState<{
     itemName: string;
     tier: { label: string; color: string; epithet: string };
@@ -162,9 +177,24 @@ export function TierListPage() {
   }
 
   const q = search.trim().toLowerCase();
-  const matchedIds = q
+  const searchSet = q
     ? new Set(Object.values(state.items).filter((it) => it.name.toLowerCase().includes(q)).map((it) => it.id))
     : null;
+  // Overall ranking: tier order (S first), then placement order within a tier
+  // (top-left = higher). Pool items are unranked. Top-N = first N of that order.
+  let topSet: Set<string> | null = null;
+  if (topN != null && topN > 0) {
+    const ranking: string[] = [];
+    for (const tier of state.tiers) {
+      for (const id of state.placement[tier.id] ?? []) if (state.items[id]) ranking.push(id);
+    }
+    topSet = new Set(ranking.slice(0, topN));
+  }
+  const matchedIds = topSet
+    ? searchSet
+      ? new Set([...searchSet].filter((id) => topSet!.has(id)))
+      : topSet
+    : searchSet;
 
   const total = Object.keys(state.items).length;
   const ranked = total - itemsOf(POOL_ID).length;
@@ -186,22 +216,16 @@ export function TierListPage() {
         {room.room && (
           <>
             <span className="h-[22px] w-px bg-border" />
-            <div className="flex items-center">
-              {room.room.members.slice(0, 5).map((m, i) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  title={m.name}
-                  onClick={() => setMemberView(m)}
-                  className="-ml-2.5 rounded-md ring-2 ring-panel-head transition-transform first:ml-0 hover:z-10 hover:-translate-y-0.5"
-                  style={{ zIndex: 5 - i }}
-                >
-                  <Avatar name={m.name} src={m.avatar} frame={m.frame} size={36} />
-                </button>
+            <div className="flex items-center gap-2">
+              {room.room.members.slice(0, 8).map((m) => (
+                <PresenceAvatar key={m.id} member={m} size={34} onClick={() => setMemberView(m)} />
               ))}
-              <span className="ml-2 text-[12px] font-semibold text-muted-foreground">
-                {room.room.members.length}명
-              </span>
+              {room.room.members.length > 8 && (
+                <span className="text-[12px] font-semibold text-muted-foreground">
+                  +{room.room.members.length - 8}
+                </span>
+              )}
+              <span className="ml-1 text-[12px] font-semibold text-muted-foreground">{room.room.members.length}명</span>
             </div>
           </>
         )}
@@ -316,11 +340,14 @@ export function TierListPage() {
               <span className="font-semibold text-muted-foreground">
                 <b className="text-indigo-fg tabular-nums">{ranked}</b> / {total} 배치
               </span>
-              <span className="h-1 w-28 overflow-hidden rounded-full bg-muted">
+              <span className="h-1.5 w-28 overflow-hidden rounded-full bg-[#2C333F] ring-1 ring-inset ring-[#3A4250]">
                 <span
                   className="block h-full rounded-full bg-indigo transition-[width] duration-300"
                   style={{ width: `${total ? Math.round((ranked / total) * 100) : 0}%` }}
                 />
+              </span>
+              <span className="text-xs font-semibold text-indigo-fg tabular-nums">
+                {total ? Math.round((ranked / total) * 100) : 0}%
               </span>
               <span className="text-xs text-muted-foreground">티어 {state.tiers.length}</span>
             </div>
@@ -363,6 +390,53 @@ export function TierListPage() {
           >
             <ArrowDownAZ className="size-4" /> 사전순
           </button>
+          <div
+            className="flex h-9 items-center gap-1 rounded-lg border pr-2 pl-1"
+            style={
+              topN != null
+                ? { borderColor: "rgba(99,102,241,.5)", background: "rgba(99,102,241,.14)" }
+                : { borderColor: "var(--border)", background: "var(--card)" }
+            }
+          >
+            <button
+              type="button"
+              onClick={() => setTopN((v) => (v == null ? 10 : null))}
+              title="상위 N개만 강조 (랭킹: 티어 순서 + 티어 내 왼쪽 위)"
+              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[13px] font-bold"
+              style={{ color: topN != null ? "var(--indigo-fg)" : "var(--muted-foreground)" }}
+            >
+              <Trophy className="size-4" /> 상위
+            </button>
+            {topN != null && (
+              <div className="flex h-7 items-center overflow-hidden rounded-md border border-border bg-card">
+                <input
+                  type="number"
+                  min={1}
+                  value={topN}
+                  onChange={(e) => setTopN(Math.max(1, Math.floor(Number(e.target.value)) || 1))}
+                  className="h-full w-11 bg-transparent text-center text-[15px] font-extrabold text-foreground tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                <div className="flex h-full w-5 flex-col border-l border-border">
+                  <button
+                    type="button"
+                    aria-label="증가"
+                    onClick={() => setTopN((n) => (n ?? 10) + 1)}
+                    className="grid flex-1 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <ChevronUp className="size-3" strokeWidth={3} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="감소"
+                    onClick={() => setTopN((n) => Math.max(1, (n ?? 10) - 1))}
+                    className="grid flex-1 place-items-center border-t border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <ChevronDown className="size-3" strokeWidth={3} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="relative w-60 max-w-full">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -568,8 +642,11 @@ export function TierListPage() {
             canModerate={canModerate}
             canGrantAdmin={room.authUser.isAdmin}
             canAttack={canAttack}
+            attackReadyAt={memberView.userId ? attackCd[memberView.userId] ?? 0 : 0}
             onModerate={(action, seconds) => {
               room.moderate(action, memberView.userId, seconds);
+              if (action === "attack" && memberView.userId)
+                setAttackCd((c) => ({ ...c, [memberView.userId!]: Date.now() + 5_000 }));
               if (action === "kick") setMemberView(null);
             }}
             onGrantAdmin={(make) => {
@@ -604,8 +681,9 @@ export function TierListPage() {
           attackKey={room.attack.at}
           by={room.attack.by}
           parryable={room.attack.parryable}
+          level={room.attack.level}
           items={attackItems()}
-          onParry={() => room.attack?.byUserId && room.parryAttack(room.attack.byUserId)}
+          onParry={() => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, room.attack.level)}
           onDone={room.clearAttack}
         />
       )}

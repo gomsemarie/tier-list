@@ -66,10 +66,10 @@ export type RoomConnection = {
   authUser: AuthUser | null;
   activeVote: VoteSnapshot | null;
   /** Set briefly when this client is attacked by an admin (drives the hit effect). */
-  attack: { by: string; byUserId?: string; parryable: boolean; at: number } | null;
+  attack: { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null;
   clearAttack: () => void;
   /** The attacked user reflects the attack back to its sender. */
-  parryAttack: (attackerId: string) => void;
+  parryAttack: (attackerId: string, level?: number) => void;
   /** Set briefly when anyone is timed-banned (drives the center-top game effect). */
   moderation: (ModerationEffect & { at: number }) | null;
   clearModeration: () => void;
@@ -156,7 +156,7 @@ export function useRoom(): RoomConnection {
   const [authUser, setAuthUser] = useState<AuthUser | null>(loadUser);
   const [activeVote, setActiveVote] = useState<VoteSnapshot | null>(null);
   const [attack, setAttack] = useState<
-    { by: string; byUserId?: string; parryable: boolean; at: number } | null
+    { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null
   >(null);
   const [moderation, setModeration] = useState<
     (ModerationEffect & { at: number }) | null
@@ -244,7 +244,7 @@ export function useRoom(): RoomConnection {
       (
         payload:
           | string
-          | { by?: string; byUserId?: string; parryable?: boolean },
+          | { by?: string; byUserId?: string; parryable?: boolean; level?: number },
       ) => {
         if (typeof payload === "string") {
           setAttack({ by: payload || "누군가", parryable: false, at: Date.now() });
@@ -253,6 +253,7 @@ export function useRoom(): RoomConnection {
             by: String(payload?.by || "누군가"),
             byUserId: payload?.byUserId,
             parryable: !!payload?.parryable,
+            level: payload?.level ?? 0,
             at: Date.now(),
           });
         }
@@ -451,8 +452,8 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const clearAttack = useCallback(() => setAttack(null), []);
-  const parryAttack = useCallback((attackerId: string) => {
-    socketRef.current?.emit("attack:parry", { attackerId });
+  const parryAttack = useCallback((attackerId: string, level?: number) => {
+    socketRef.current?.emit("attack:parry", { attackerId, level });
   }, []);
   const clearModeration = useCallback(() => setModeration(null), []);
 

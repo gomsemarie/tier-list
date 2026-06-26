@@ -89,7 +89,11 @@ export function ItemCard({
           dndEnabled && "active:cursor-grabbing",
           dragging && "opacity-40",
         )}
-        style={{ boxShadow: "inset 0 0 0 1px rgba(255,255,255,.12), 0 1px 5px rgba(0,0,0,.5)" }}
+        style={{
+          // Outer ring + lift; the inner neutral ring is an overlay below so the
+          // image can't paint over it (selected/voting rings layer on top).
+          boxShadow: "0 0 0 1px rgba(0,0,0,.5), 0 1px 4px rgba(0,0,0,.45)",
+        }}
       >
         {item.imageUrl ? (
           <img src={item.imageUrl} alt={item.name} draggable={false} className="size-full object-cover" />
@@ -107,6 +111,11 @@ export function ItemCard({
         >
           {item.name}
         </div>
+        {/* Always-on neutral ring (over the image) for clear card boundaries. */}
+        <div
+          className="pointer-events-none absolute inset-0 rounded-[4px]"
+          style={{ boxShadow: "inset 0 0 0 1.5px rgba(255,255,255,.28)" }}
+        />
         {voting && (
           <>
             <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#FF4C3A_inset]" />

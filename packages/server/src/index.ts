@@ -79,6 +79,10 @@ type Room = {
   mutes: Map<string, number>;
   placeBans: Map<string, number>;
   voteBans: Map<string, number>;
+  /** Original ban durations (ms), for the client's depleting timer ring. */
+  muteDur: Map<string, number>;
+  placeBanDur: Map<string, number>;
+  voteBanDur: Map<string, number>;
   /** In-progress tier vote (ephemeral, not persisted). */
   vote: VoteState | null;
   voteTimer: ReturnType<typeof setTimeout> | null;
@@ -118,6 +122,13 @@ function voteDurationMs(seconds: unknown): number {
 }
 
 const MAX_AVATAR = 300_000; // cap data-url size
+
+// Attack rate limits (ephemeral).
+const ATTACK_COOLDOWN_MS = 5_000; // per (attacker → target) pair
+const PARRY_RAMP_MS = 30_000; // re-attacks within this window ramp parry difficulty
+const MAX_PARRY_LEVEL = 5;
+const attackCooldownPair = new Map<string, number>(); // `${roomId}:${attacker}:${target}` -> ts
+const victimStreak = new Map<string, { ts: number; level: number }>(); // `${roomId}:${victim}`
 
 // --- Password hashing (Node crypto scrypt — no external deps) ----------------
 function hashPassword(password: string): { salt: string; hash: string } {
@@ -243,6 +254,9 @@ for (const persisted of loadAllRooms()) {
     mutes: new Map(),
     placeBans: new Map(),
     voteBans: new Map(),
+    muteDur: new Map(),
+    placeBanDur: new Map(),
+    voteBanDur: new Map(),
     vote: null,
     voteTimer: null,
     voteOptOut: new Set(),
@@ -307,6 +321,9 @@ function snapshot(room: Room): RoomSnapshot {
         placeBannedUntil && placeBannedUntil > now ? placeBannedUntil : undefined,
       voteBannedUntil:
         voteBannedUntil && voteBannedUntil > now ? voteBannedUntil : undefined,
+      mutedFor: mutedUntil && mutedUntil > now ? room.muteDur.get(m.userId) : undefined,
+      placeBannedFor: placeBannedUntil && placeBannedUntil > now ? room.placeBanDur.get(m.userId) : undefined,
+      voteBannedFor: voteBannedUntil && voteBannedUntil > now ? room.voteBanDur.get(m.userId) : undefined,
     };
   });
   return {
@@ -1201,8 +1218,9 @@ io.on("connection", (socket: Socket) => {
     },
   );
 
-  // Parry: the attacked user reflects a *non-parryable* attack to the attacker.
-  socket.on("attack:parry", ({ attackerId }: { attackerId?: string }) => {
+  // Parry: reflect the attack back to the attacker. The rally can keep going —
+  // each reflected attack is still parryable, but one level harder for both.
+  socket.on("attack:parry", ({ attackerId, level }: { attackerId?: string; level?: number }) => {
     if (!currentRoom || !authedUser) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
@@ -1210,17 +1228,19 @@ io.on("connection", (socket: Socket) => {
     if (!aid || aid === authedUser.id) return;
     const attacker = [...room.members.values()].find((m) => m.userId === aid);
     if (!attacker) return; // attacker left — nothing to reflect to
+    const nextLevel = Math.min(MAX_PARRY_LEVEL, Math.max(0, Math.floor(Number(level ?? 0))) + 1);
     for (const [sid, m] of room.members) {
       if (m.userId === aid)
         io.to(sid).emit("room:attacked", {
           by: name,
           byUserId: authedUser.id,
-          parryable: false, // reflected hits can't be parried again
+          parryable: true, // the rally continues — they can parry back
+          level: nextLevel,
         });
     }
     pushMessage(
       room,
-      message("system", `🛡️ ${name} 님이 ${attacker.name} 님의 공격을 패링해 되돌렸습니다!`, "action"),
+      message("system", `🛡️ ${name} 님이 ${attacker.name} 님의 공격을 패링해 되돌렸습니다! (LV.${nextLevel})`, "action"),
     );
     broadcast(io, room);
   });
@@ -1320,6 +1340,9 @@ io.on("connection", (socket: Socket) => {
         mutes: new Map(),
         placeBans: new Map(),
         voteBans: new Map(),
+        muteDur: new Map(),
+        placeBanDur: new Map(),
+        voteBanDur: new Map(),
         vote: null,
         voteTimer: null,
         voteOptOut: new Set(),
@@ -1406,12 +1429,29 @@ io.on("connection", (socket: Socket) => {
         return;
       }
       const tgt = [...room.members.values()].find((m) => m.userId === tid);
+      const now = Date.now();
+      // Cooldown is per (attacker → this target): you can't re-hit the same
+      // person for 10s, but you can attack someone else.
+      const cdKey = `${room.id}:${authedUser.id}:${tid}`;
+      const cdLeft = ATTACK_COOLDOWN_MS - (now - (attackCooldownPair.get(cdKey) ?? 0));
+      if (cdLeft > 0) {
+        hint(`${tgt?.name ?? "참가자"} 공격 쿨타임 ${Math.ceil(cdLeft / 1000)}초 남았어요.`);
+        return;
+      }
+      attackCooldownPair.set(cdKey, now);
+      // Parry-difficulty streak: re-attacks within 30s ramp the level (the timer
+      // resets on every hit); after 30s with no attack it drops back to 0.
+      const vKey = `${room.id}:${tid}`;
+      const prev = victimStreak.get(vKey);
+      const level = prev && now - prev.ts < PARRY_RAMP_MS ? Math.min(prev.level + 1, MAX_PARRY_LEVEL) : 0;
+      victimStreak.set(vKey, { ts: now, level });
       for (const [sid, m] of room.members) {
         if (m.userId === tid)
           io.to(sid).emit("room:attacked", {
             by: name,
             byUserId: authedUser.id,
             parryable: true,
+            level,
           });
       }
       pushMessage(room, message("system", `⚡ ${name} 님이 ${tgt?.name ?? "참가자"} 님을 공격했습니다!`, "action"));
@@ -1479,9 +1519,11 @@ io.on("connection", (socket: Socket) => {
     if (action === "mute") {
       if (secs === 0) {
         room.mutes.delete(targetUserId);
+        room.muteDur.delete(targetUserId);
         pushMessage(room, message("system", `${targetName} 님의 채팅 금지를 해제했습니다.`, "system"));
       } else {
         room.mutes.set(targetUserId, Date.now() + durationMs);
+        room.muteDur.set(targetUserId, durationMs);
         pushMessage(room, message("system", `${targetName} 님을 ${durationLabel}간 채팅 금지했습니다.`, "system"));
         announceBan("mute");
       }
@@ -1492,9 +1534,11 @@ io.on("connection", (socket: Socket) => {
     if (action === "banPlace") {
       if (secs === 0) {
         room.placeBans.delete(targetUserId);
+        room.placeBanDur.delete(targetUserId);
         pushMessage(room, message("system", `${targetName} 님의 배치 금지를 해제했습니다.`, "system"));
       } else {
         room.placeBans.set(targetUserId, Date.now() + durationMs);
+        room.placeBanDur.set(targetUserId, durationMs);
         pushMessage(room, message("system", `${targetName} 님을 ${durationLabel}간 배치 금지했습니다.`, "system"));
         announceBan("banPlace");
       }
@@ -1505,9 +1549,11 @@ io.on("connection", (socket: Socket) => {
     if (action === "banVote") {
       if (secs === 0) {
         room.voteBans.delete(targetUserId);
+        room.voteBanDur.delete(targetUserId);
         pushMessage(room, message("system", `${targetName} 님의 투표 금지를 해제했습니다.`, "system"));
       } else {
         room.voteBans.set(targetUserId, Date.now() + durationMs);
+        room.voteBanDur.set(targetUserId, durationMs);
         pushMessage(room, message("system", `${targetName} 님을 ${durationLabel}간 투표 금지했습니다.`, "system"));
         announceBan("banVote");
       }

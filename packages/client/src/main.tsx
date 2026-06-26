@@ -3,14 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@/index.css";
 import App from "@/App.tsx";
 
-// Apply the saved theme before first paint (default = light) to avoid a flash.
-try {
-  if (localStorage.getItem("tier-list:theme") === "dark") {
-    document.documentElement.classList.add("dark");
-  }
-} catch {
-  /* ignore */
-}
+// Dark-only app — the `dark` class is hardcoded on <html> in index.html.
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

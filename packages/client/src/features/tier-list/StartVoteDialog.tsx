@@ -3,6 +3,8 @@ import { useState } from "react";
 import type { Item } from "@tier-list/shared";
 
 const TIMES = [
+  { s: 5, label: "5초" },
+  { s: 10, label: "10초" },
   { s: 30, label: "30초" },
   { s: 60, label: "1분" },
   { s: 180, label: "3분" },
@@ -72,7 +74,7 @@ export function StartVoteDialog({ item, currentTier, onConfirm, onCancel }: Star
           />
 
           <div className="mb-1.5 text-[11px] font-semibold text-[#8A8F9C]">제한 시간</div>
-          <div className="mb-[18px] grid grid-cols-4 gap-1.5">
+          <div className="mb-[18px] grid grid-cols-3 gap-1.5">
             {TIMES.map((t) => (
               <button
                 key={t.s}

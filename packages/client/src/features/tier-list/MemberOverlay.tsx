@@ -1,4 +1,5 @@
-import { MessageSquareOff, Ban, ListX, ShieldCheck, Swords, UserX, Lock } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { MessageSquareOff, Ban, ListX, ShieldCheck, Swords, UserX, Lock, Zap } from "lucide-react";
 
 import type { ModerateActionType, Member } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
@@ -18,6 +19,8 @@ type MemberOverlayProps = {
   canModerate: boolean;
   canGrantAdmin: boolean;
   canAttack: boolean;
+  /** Epoch ms when the actor's attack cooldown ends (0 = ready). */
+  attackReadyAt?: number;
   onModerate: (action: ModerateActionType, seconds?: number) => void;
   onGrantAdmin: (makeAdmin: boolean) => void;
   onClose: () => void;
@@ -36,10 +39,35 @@ export function MemberOverlay({
   canModerate,
   canGrantAdmin,
   canAttack,
+  attackReadyAt = 0,
   onModerate,
   onGrantAdmin,
   onClose,
 }: MemberOverlayProps) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (attackReadyAt <= Date.now()) return;
+    const id = setInterval(() => tick((n) => n + 1), 250);
+    return () => clearInterval(id);
+  }, [attackReadyAt]);
+  const cdLeft = Math.max(0, Math.ceil((attackReadyAt - Date.now()) / 1000));
+
+  // Auto-attack: fire whenever the cooldown is up (while the overlay is open).
+  const [auto, setAuto] = useState(false);
+  const lastFire = useRef(0);
+  useEffect(() => setAuto(false), [member.userId]); // reset when switching target
+  useEffect(() => {
+    if (!auto || !canModerate || isSelf) return;
+    const id = setInterval(() => {
+      const t = Date.now();
+      if (t >= attackReadyAt && t - lastFire.current >= 4500) {
+        lastFire.current = t;
+        onModerate("attack");
+      }
+    }, 300);
+    return () => clearInterval(id);
+  }, [auto, canModerate, isSelf, attackReadyAt, onModerate]);
+
   const now = Date.now();
   const muted = (member.mutedUntil ?? 0) > now;
   const placeBanned = (member.placeBannedUntil ?? 0) > now;
@@ -109,14 +137,34 @@ export function MemberOverlay({
                 {canAttack && (
                   <button
                     type="button"
+                    disabled={cdLeft > 0}
                     onClick={() => onModerate("attack")}
                     className="font-pixel flex h-[38px] flex-1 items-center justify-center gap-1.5 rounded-[2px] text-[13px] font-bold text-white"
-                    style={{ border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A" }}
+                    style={
+                      cdLeft > 0
+                        ? { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#3A2226", color: "#9A6B70", cursor: "not-allowed" }
+                        : { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A" }
+                    }
                   >
-                    <Swords className="size-3.5" /> 공격
+                    <Swords className="size-3.5" /> {cdLeft > 0 ? `${cdLeft}초` : "공격"}
                   </button>
                 )}
               </div>
+              {canAttack && (
+                <button
+                  type="button"
+                  onClick={() => setAuto((v) => !v)}
+                  className="font-pixel flex h-8 items-center justify-center gap-1.5 rounded-[2px] text-[12px] font-bold"
+                  style={
+                    auto
+                      ? { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A", color: "#fff" }
+                      : { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#171B22", color: "#C4C8D2" }
+                  }
+                >
+                  <Zap className="size-3.5" style={{ animation: auto ? "blink 1s steps(1) infinite" : undefined }} />
+                  자동공격 {auto ? "ON" : "OFF"}
+                </button>
+              )}
               {canGrantAdmin && (
                 <button
                   type="button"
@@ -134,11 +182,16 @@ export function MemberOverlay({
           <div className="border-t border-[#232934] pt-3.5">
             <button
               type="button"
+              disabled={cdLeft > 0}
               onClick={() => onModerate("attack")}
               className="font-pixel flex h-[38px] w-full items-center justify-center gap-1.5 rounded-[2px] text-[13px] font-bold text-white"
-              style={{ border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A" }}
+              style={
+                cdLeft > 0
+                  ? { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#3A2226", color: "#9A6B70", cursor: "not-allowed" }
+                  : { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A" }
+              }
             >
-              <Swords className="size-3.5" /> 공격
+              <Swords className="size-3.5" /> {cdLeft > 0 ? `공격 쿨타임 ${cdLeft}초` : "공격"}
             </button>
           </div>
         ) : (

@@ -43,6 +43,7 @@ export function TierRow({
   onDeleteTier,
 }: TierRowProps) {
   const dropRef = useRef<HTMLDivElement>(null);
+  const colorRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [hover, setHover] = useState(false);
 
@@ -69,7 +70,7 @@ export function TierRow({
         className="relative flex w-[84px] shrink-0 flex-col items-center justify-center gap-0.5 px-1 py-0.5"
         style={{ background: tier.color }}
       >
-        <span className="absolute top-1 right-1.5 text-[10px] font-bold text-white/70 tabular-nums">
+        <span className="absolute top-[5px] right-1.5 text-[10px] font-bold text-white/70 tabular-nums">
           {items.length}
         </span>
         <input
@@ -94,26 +95,36 @@ export function TierRow({
             hover ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >
-          <label
+          <button
+            type="button"
             title="색상 변경"
-            className="relative grid size-4 cursor-pointer place-items-center rounded-full bg-black/30 shadow-[0_0_0_1px_rgba(255,255,255,.45)]"
+            onClick={(e) => {
+              e.stopPropagation();
+              colorRef.current?.click();
+            }}
+            className="relative grid size-[18px] cursor-pointer place-items-center rounded-full bg-black/30 shadow-[0_0_0_1px_rgba(255,255,255,.45)]"
           >
             <span className="size-2 rounded-full bg-white" />
             <input
+              ref={colorRef}
               type="color"
               value={tier.color}
               onChange={(e) => onRecolor(tier.id, e.target.value)}
-              className="absolute inset-0 cursor-pointer opacity-0"
+              tabIndex={-1}
+              className="pointer-events-none absolute bottom-0 size-0 opacity-0"
             />
-          </label>
+          </button>
           {canDelete && (
             <button
               type="button"
               title="티어 삭제"
-              onClick={() => onDeleteTier(tier.id)}
-              className="grid size-4 place-items-center rounded-[4px] bg-black/30 text-white shadow-[0_0_0_1px_rgba(255,255,255,.45)]"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm(`'${tier.label}' 티어를 삭제할까요?`)) onDeleteTier(tier.id);
+              }}
+              className="grid size-[18px] place-items-center rounded-[4px] bg-black/30 text-white shadow-[0_0_0_1px_rgba(255,255,255,.45)]"
             >
-              <X className="size-2.5" strokeWidth={3} />
+              <X className="size-3" strokeWidth={3} />
             </button>
           )}
         </div>

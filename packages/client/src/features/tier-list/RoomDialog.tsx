@@ -48,7 +48,7 @@ export function RoomDialog({
   const [title, setTitle] = useState("");
   const [isPublic, setIsPublic] = useState(true);
   const [cover, setCover] = useState("");
-  const [menuId, setMenuId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   // Image-search target: "create" (the create form) or a room id (existing room).
   const [searchFor, setSearchFor] = useState<string | null>(null);
   const coverRef = useRef<HTMLInputElement>(null);
@@ -270,20 +270,26 @@ export function RoomDialog({
                         <button
                           type="button"
                           aria-label="방 관리"
-                          onClick={() => setMenuId((v) => (v === r.id ? null : r.id))}
+                          onClick={(e) => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setMenu((m) => (m?.id === r.id ? null : { id: r.id, x: rect.right, y: rect.bottom }));
+                          }}
                           className="grid size-[38px] place-items-center rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[#C4C8D2]"
                         >
                           <MoreHorizontal className="size-4" />
                         </button>
                       )}
-                      {menuId === r.id && (
+                      {menu?.id === r.id && (
                         <>
-                          <div className="fixed inset-0 z-10" onClick={() => setMenuId(null)} />
-                          <div className="absolute top-[54px] right-3.5 z-20 w-[152px] rounded-[8px] border border-[#2A3142] bg-[#13161D] p-1.5 shadow-[0_14px_40px_rgba(0,0,0,.6)]">
+                          <div className="fixed inset-0 z-[62]" onClick={() => setMenu(null)} />
+                          <div
+                            className="fixed z-[63] w-[160px] rounded-[8px] border border-[#2A3142] bg-[#13161D] p-1.5 shadow-[0_14px_40px_rgba(0,0,0,.6)]"
+                            style={{ left: Math.max(8, menu.x - 160), top: menu.y + 6 }}
+                          >
                             <button
                               type="button"
                               onClick={() => {
-                                setMenuId(null);
+                                setMenu(null);
                                 const t = window.prompt("새 방 이름", r.title)?.trim();
                                 if (t && t !== r.title) onRename(r.id, t);
                               }}
@@ -294,7 +300,7 @@ export function RoomDialog({
                             <button
                               type="button"
                               onClick={() => {
-                                setMenuId(null);
+                                setMenu(null);
                                 rowTargetRef.current = r.id;
                                 rowImgRef.current?.click();
                               }}
@@ -305,7 +311,7 @@ export function RoomDialog({
                             <button
                               type="button"
                               onClick={() => {
-                                setMenuId(null);
+                                setMenu(null);
                                 setSearchFor(r.id);
                               }}
                               className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#D5D8E2] hover:bg-[#1B2029]"
@@ -315,7 +321,7 @@ export function RoomDialog({
                             <button
                               type="button"
                               onClick={() => {
-                                setMenuId(null);
+                                setMenu(null);
                                 if (window.confirm(`'${r.title}' 방을 삭제할까요?`)) onDelete(r.id);
                               }}
                               className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#F87171] hover:bg-[#1B2029]"

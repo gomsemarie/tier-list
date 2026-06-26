@@ -105,7 +105,7 @@ export function AccountDialog({
     <>
       <div onClick={onClose} className="fixed inset-0 z-[60] bg-black/60" />
       <div
-        className="fixed top-1/2 left-1/2 z-[61] max-h-[90vh] w-[420px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[10px] border border-[#242a3a] bg-[#13161D]"
+        className="fixed top-1/2 left-1/2 z-[61] max-h-[90vh] w-[720px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[10px] border border-[#242a3a] bg-[#13161D]"
         style={{ boxShadow: "0 24px 64px rgba(0,0,0,.6)", animation: "popIn .16s ease both" }}
       >
         <div className="flex items-center gap-2 border-b border-[#1B1F27] px-[18px] py-3.5">
@@ -154,6 +154,8 @@ export function AccountDialog({
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-x-5">
+           <div>
           <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 아바타 프레임</label>
           <div className="mb-4 flex flex-wrap gap-2.5">
             <FrameOption selected={!user.frame} label="없음" onClick={() => onEquip({ frame: "" })}>
@@ -207,7 +209,9 @@ export function AccountDialog({
               );
             })}
           </div>
+           </div>
 
+           <div>
           <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">코드 입력 (스킨·perk 상환)</label>
           <div className="mb-4 flex gap-2">
             <input
@@ -304,8 +308,10 @@ export function AccountDialog({
               )}
             </div>
           )}
+           </div>
+          </div>
 
-          <div className="flex gap-2">
+          <div className="mt-4 flex gap-2">
             <button
               type="button"
               disabled={busy}

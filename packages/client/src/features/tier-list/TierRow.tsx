@@ -61,7 +61,7 @@ export function TierRow({
   }, [tier.id, dndEnabled]);
 
   return (
-    <div className="flex border-b border-[#181C24] last:border-0">
+    <div className="flex border-b-2 border-[#454D5C] last:border-0">
       {/* Emblem */}
       <div
         onMouseEnter={() => setHover(true)}

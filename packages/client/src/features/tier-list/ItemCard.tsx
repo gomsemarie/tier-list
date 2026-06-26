@@ -73,8 +73,10 @@ export function ItemCard({
       {edge && (
         <div
           className={cn(
+            // Centered in the 7px gap so a card's right edge and the next
+            // card's left edge land on the exact same line (no double bar).
             "absolute -top-1 -bottom-1 z-10 w-[3px] rounded-full bg-foreground",
-            edge === "left" ? "-left-1.5" : "-right-1.5",
+            edge === "left" ? "-left-[5px]" : "-right-[5px]",
           )}
         />
       )}
@@ -87,7 +89,7 @@ export function ItemCard({
           dndEnabled && "active:cursor-grabbing",
           dragging && "opacity-40",
         )}
-        style={{ boxShadow: "0 1px 4px rgba(0,0,0,.4)" }}
+        style={{ boxShadow: "inset 0 0 0 1px rgba(255,255,255,.12), 0 1px 5px rgba(0,0,0,.5)" }}
       >
         {item.imageUrl ? (
           <img src={item.imageUrl} alt={item.name} draggable={false} className="size-full object-cover" />
@@ -100,8 +102,8 @@ export function ItemCard({
           </div>
         )}
         <div
-          className="absolute inset-x-0 bottom-0 overflow-hidden px-[3px] py-[2px] text-center text-[9px] font-semibold text-ellipsis whitespace-nowrap text-white"
-          style={{ background: "linear-gradient(transparent,rgba(7,8,12,.94))" }}
+          className="absolute inset-x-0 bottom-0 truncate px-1 py-[3px] text-center text-[9px] leading-tight font-bold text-white"
+          style={{ background: "rgba(17,20,28,.92)", borderTop: "1px solid rgba(255,255,255,.1)" }}
         >
           {item.name}
         </div>

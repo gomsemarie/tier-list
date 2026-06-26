@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ImagePlus, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 
 import type { RoomSummary } from "@tier-list/shared";
+import { ImageSearchPanel } from "./ImageSearchPanel";
 
 type RoomDialogProps = {
   rooms: RoomSummary[];
@@ -11,11 +12,21 @@ type RoomDialogProps = {
   error?: string | null;
   onRefresh: () => void;
   onJoin: (code: string) => void;
-  onCreate: (title: string, isPublic: boolean) => void;
+  onCreate: (title: string, isPublic: boolean, image: string) => void;
   onRename: (roomId: string, title: string) => void;
   onDelete: (roomId: string) => void;
+  onSetImage: (roomId: string, image: string) => void;
   onClose: () => void;
 };
+
+function readImage(file: File | undefined, cb: (dataUrl: string) => void) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (typeof reader.result === "string") cb(reader.result);
+  };
+  reader.readAsDataURL(file);
+}
 
 /** Lobby: public room list + code-join, with an inline create view. */
 export function RoomDialog({
@@ -29,13 +40,20 @@ export function RoomDialog({
   onCreate,
   onRename,
   onDelete,
+  onSetImage,
   onClose,
 }: RoomDialogProps) {
   const [code, setCode] = useState("");
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [isPublic, setIsPublic] = useState(true);
+  const [cover, setCover] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
+  // Image-search target: "create" (the create form) or a room id (existing room).
+  const [searchFor, setSearchFor] = useState<string | null>(null);
+  const coverRef = useRef<HTMLInputElement>(null);
+  const rowImgRef = useRef<HTMLInputElement>(null);
+  const rowTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
     onRefresh();
@@ -75,9 +93,52 @@ export function RoomDialog({
                 autoFocus
                 placeholder="예: 라면 티어 정하기"
                 onChange={(e) => setTitle(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && title.trim() && onCreate(title.trim(), isPublic)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && title.trim() && onCreate(title.trim(), isPublic, cover)}
                 className="mb-4 h-[38px] w-full rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-3 text-[13px] text-[#EDEAE2] outline-none focus:border-[#6366F1]"
               />
+              <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">대표 이미지 (선택)</label>
+              <div className="mb-4 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => coverRef.current?.click()}
+                  className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-[6px] border border-dashed border-[#2A3142] bg-[#0E1117] text-[#8A8F9C]"
+                >
+                  {cover ? <img src={cover} alt="" className="size-full object-cover" /> : <ImagePlus className="size-5" />}
+                </button>
+                <div className="flex flex-col items-start gap-1.5">
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => coverRef.current?.click()}
+                      className="rounded-[5px] border border-[#2A303C] bg-[#171B22] px-2.5 py-1 text-[12px] font-semibold text-[#C4C8D2]"
+                    >
+                      업로드
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSearchFor("create")}
+                      className="flex items-center gap-1 rounded-[5px] border border-[#2A303C] bg-[#171B22] px-2.5 py-1 text-[12px] font-semibold text-[#C4C8D2]"
+                    >
+                      <Search className="size-3" /> 검색
+                    </button>
+                  </div>
+                  {cover && (
+                    <button type="button" onClick={() => setCover("")} className="text-[11px] text-[#8A8F9C]">
+                      제거
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={coverRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => {
+                    readImage(e.target.files?.[0], setCover);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
               <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">공개 설정</label>
               <div className="mb-4 flex gap-2">
                 <button
@@ -119,7 +180,7 @@ export function RoomDialog({
                 <button
                   type="button"
                   disabled={!title.trim()}
-                  onClick={() => onCreate(title.trim(), isPublic)}
+                  onClick={() => onCreate(title.trim(), isPublic, cover)}
                   className="h-10 flex-1 rounded-[6px] bg-[#6366F1] text-[13px] font-bold text-white disabled:opacity-40"
                 >
                   방 만들기
@@ -170,6 +231,13 @@ export function RoomDialog({
                       key={r.id}
                       className="relative flex items-center gap-[13px] rounded-[8px] border border-[#232934] bg-[#0E1117] px-[15px] py-[13px]"
                     >
+                      <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-[6px] border border-[#232934] bg-[#11141B]">
+                        {r.image ? (
+                          <img src={r.image} alt="" className="size-full object-cover" />
+                        ) : (
+                          <span className="text-[15px] font-extrabold text-[#4A4F5B]">{r.title.slice(0, 1)}</span>
+                        )}
+                      </div>
                       <div className="flex flex-1 flex-col gap-[3px]">
                         <div className="flex items-center gap-2">
                           <span className="size-[7px] rounded-full bg-[#5BD3A0]" />
@@ -227,6 +295,27 @@ export function RoomDialog({
                               type="button"
                               onClick={() => {
                                 setMenuId(null);
+                                rowTargetRef.current = r.id;
+                                rowImgRef.current?.click();
+                              }}
+                              className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#D5D8E2] hover:bg-[#1B2029]"
+                            >
+                              <ImagePlus className="size-3.5" /> 대표 이미지 업로드
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMenuId(null);
+                                setSearchFor(r.id);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#D5D8E2] hover:bg-[#1B2029]"
+                            >
+                              <Search className="size-3.5" /> 대표 이미지 검색
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMenuId(null);
                                 if (window.confirm(`'${r.title}' 방을 삭제할까요?`)) onDelete(r.id);
                               }}
                               className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#F87171] hover:bg-[#1B2029]"
@@ -245,6 +334,31 @@ export function RoomDialog({
           )}
         </div>
       </div>
+
+      <input
+        ref={rowImgRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const id = rowTargetRef.current;
+          if (id) readImage(e.target.files?.[0], (url) => onSetImage(id, url));
+          e.target.value = "";
+          rowTargetRef.current = null;
+        }}
+      />
+
+      {searchFor && (
+        <ImageSearchPanel
+          initialQuery={searchFor === "create" ? title : rooms.find((r) => r.id === searchFor)?.title ?? ""}
+          onSelect={(url) => {
+            if (searchFor === "create") setCover(url);
+            else onSetImage(searchFor, url);
+            setSearchFor(null);
+          }}
+          onClose={() => setSearchFor(null)}
+        />
+      )}
     </>
   );
 }

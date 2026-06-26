@@ -12,6 +12,8 @@ export type PersistedRoom = {
   messages: ChatMessage[];
   createdAt: number;
   isPublic: boolean;
+  /** Optional room cover image (data URL); "" when unset. */
+  image: string;
 };
 
 const DB_PATH = process.env.DB_PATH ?? "data/rooms.db";
@@ -46,17 +48,20 @@ if (!existing.has("created_at"))
 // Existing rooms default to public (preserves the pre-feature lobby behaviour).
 if (!existing.has("is_public"))
   db.exec("ALTER TABLE rooms ADD COLUMN is_public INTEGER NOT NULL DEFAULT 1");
+if (!existing.has("image"))
+  db.exec("ALTER TABLE rooms ADD COLUMN image TEXT NOT NULL DEFAULT ''");
 
 const upsert = db.prepare(`
-  INSERT INTO rooms (id, title, owner_id, state, messages, created_at, updated_at, is_public)
-  VALUES (@id, @title, @owner_id, @state, @messages, @created_at, @updated_at, @is_public)
+  INSERT INTO rooms (id, title, owner_id, state, messages, created_at, updated_at, is_public, image)
+  VALUES (@id, @title, @owner_id, @state, @messages, @created_at, @updated_at, @is_public, @image)
   ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     owner_id = excluded.owner_id,
     state = excluded.state,
     messages = excluded.messages,
     updated_at = excluded.updated_at,
-    is_public = excluded.is_public
+    is_public = excluded.is_public,
+    image = excluded.image
 `);
 
 export function saveRoom(room: PersistedRoom): void {
@@ -69,13 +74,14 @@ export function saveRoom(room: PersistedRoom): void {
     created_at: room.createdAt,
     updated_at: Date.now(),
     is_public: room.isPublic ? 1 : 0,
+    image: room.image ?? "",
   });
 }
 
 export function loadAllRooms(): PersistedRoom[] {
   const rows = db
     .prepare(
-      "SELECT id, title, owner_id, state, messages, created_at, is_public FROM rooms",
+      "SELECT id, title, owner_id, state, messages, created_at, is_public, image FROM rooms",
     )
     .all() as {
     id: string;
@@ -85,6 +91,7 @@ export function loadAllRooms(): PersistedRoom[] {
     messages: string;
     created_at: number;
     is_public: number;
+    image: string | null;
   }[];
   return rows.flatMap((r) => {
     try {
@@ -97,6 +104,7 @@ export function loadAllRooms(): PersistedRoom[] {
           messages: JSON.parse(r.messages) as ChatMessage[],
           createdAt: r.created_at,
           isPublic: r.is_public !== 0,
+          image: r.image ?? "",
         },
       ];
     } catch {

@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { CSSProperties } from "react";
 
 import type { Tier } from "@tier-list/shared";
+import { playRankSound } from "@/lib/sound";
 
 const ARCADE = "'Press Start 2P','Galmuri11',monospace";
 const PIXEL = "'Galmuri11','Noto Sans KR',sans-serif";
@@ -10,12 +11,31 @@ const CONFETTI_COLORS = ["#FDE047", "#F87171", "#34D399", "#60A5FA", "#F472B6", 
 type PromotionEffectProps = {
   itemName: string;
   tier: { label: string; color: string; epithet: string };
+  /** Direction the vote decided: promotion / demotion / unchanged. */
+  kind: "up" | "down" | "keep";
   tiers: Tier[];
   onDismiss: () => void;
 };
 
-/** Full-screen RANK UP celebration (handoff promoEl) — no radial-ray sunburst. */
-export function PromotionEffect({ itemName, tier, tiers, onDismiss }: PromotionEffectProps) {
+/** Shrink a tier label's font by its char count so long labels don't overflow. */
+function fit(label: string, sizes: [number, number, number, number]): number {
+  const n = [...label].length;
+  return n <= 1 ? sizes[0] : n === 2 ? sizes[1] : n === 3 ? sizes[2] : sizes[3];
+}
+
+const KIND_META = {
+  up: { sub: "* 인정협회 승급 인증 *", head: "RANK UP!!", color: "#FDE047", arrow: "→" },
+  down: { sub: "* 인정협회 티어 강등 *", head: "RANK DOWN", color: "#FB7185", arrow: "▼" },
+  keep: { sub: "* 인정협회 티어 확정 *", head: "티어 확정", color: "#A5B4FC", arrow: "·" },
+} as const;
+
+/** Full-screen tier-decided effect (handoff promoEl) — no radial-ray sunburst. */
+export function PromotionEffect({ itemName, tier, kind, tiers, onDismiss }: PromotionEffectProps) {
+  const meta = KIND_META[kind];
+
+  useEffect(() => {
+    playRankSound(kind);
+  }, [kind]);
   // Randomized particles, computed once so they don't reshuffle on re-render.
   const confetti = useMemo(
     () =>
@@ -91,19 +111,19 @@ export function PromotionEffect({ itemName, tier, tiers, onDismiss }: PromotionE
         style={{ animation: "pixBounce .45s steps(5) both" }}
       >
         <div style={{ fontFamily: ARCADE, fontSize: 11, color: "#A78BFA", letterSpacing: 2 }}>
-          * 인정협회 승급 인증 *
+          {meta.sub}
         </div>
         <div
           style={{
             fontFamily: ARCADE,
             fontSize: 42,
-            color: "#FDE047",
+            color: meta.color,
             textShadow: "5px 5px 0 #000",
             letterSpacing: 1,
             animation: "colorBlink .5s steps(2) infinite",
           }}
         >
-          RANK UP!!
+          {meta.head}
         </div>
         <div className="relative grid size-[118px] place-items-center">
           {burst.map((b, i) => (
@@ -114,11 +134,11 @@ export function PromotionEffect({ itemName, tier, tiers, onDismiss }: PromotionE
             />
           ))}
           <div
-            className="relative grid size-full place-items-center"
+            className="relative grid size-full place-items-center overflow-hidden px-1 leading-none whitespace-nowrap"
             style={{
               background: tier.color,
               fontFamily: ARCADE,
-              fontSize: 50,
+              fontSize: fit(tier.label, [50, 38, 27, 21]),
               color: "#fff",
               textShadow: "4px 4px 0 #000",
               boxShadow: "0 0 0 4px #000,0 0 0 9px #fff,0 0 0 13px #000",
@@ -138,7 +158,8 @@ export function PromotionEffect({ itemName, tier, tiers, onDismiss }: PromotionE
             textAlign: "center",
           }}
         >
-          {itemName} → {tier.label}티어{tier.epithet ? ` (${tier.epithet})` : ""}
+          {itemName} {meta.arrow} {tier.label}티어{tier.epithet ? ` (${tier.epithet})` : ""}
+          {kind === "keep" ? " 유지" : ""}
         </div>
         <div className="flex gap-1.5">
           {ladder.map((t) => {
@@ -146,13 +167,13 @@ export function PromotionEffect({ itemName, tier, tiers, onDismiss }: PromotionE
             return (
               <div
                 key={t.id}
-                className="grid size-9 place-items-center"
+                className="grid size-9 place-items-center overflow-hidden px-px leading-none whitespace-nowrap"
                 style={{
                   background: win ? t.color : "#1b1230",
                   border: "3px solid #000",
                   outline: win ? "3px solid #fff" : "none",
                   fontFamily: ARCADE,
-                  fontSize: 15,
+                  fontSize: fit(t.label, [15, 12, 9, 8]),
                   color: win ? "#fff" : "#574d70",
                   textShadow: win ? "2px 2px 0 #000" : "none",
                   animation: win ? "rankFlash .5s steps(2) infinite" : "none",

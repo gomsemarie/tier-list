@@ -91,7 +91,8 @@ export type RoomConnection = {
   equipPerk: (patch: { frame?: string; scStyle?: string }) => Promise<UpdateResult>;
   fetchCodes: () => Promise<CodeInfo[]>;
   issueCode: (perks: string[]) => Promise<IssueCodeResult>;
-  createRoom: (title: string, isPublic?: boolean) => void;
+  createRoom: (title: string, isPublic?: boolean, image?: string) => void;
+  setRoomImage: (roomId: string, image: string) => void;
   joinRoom: (roomId: string) => void;
   leaveRoom: () => void;
   listRooms: () => void;
@@ -399,10 +400,14 @@ export function useRoom(): RoomConnection {
     [],
   );
 
-  const createRoom = useCallback((title: string, isPublic = true) => {
+  const createRoom = useCallback((title: string, isPublic = true, image = "") => {
     setError(null);
-    socketRef.current?.emit("room:create", { title, isPublic });
+    socketRef.current?.emit("room:create", { title, isPublic, image });
     if (optOutRef.current) socketRef.current?.emit("vote:optout", { enabled: true });
+  }, []);
+
+  const setRoomImage = useCallback((roomId: string, image: string) => {
+    socketRef.current?.emit("room:setImage", { roomId, image });
   }, []);
 
   const joinRoom = useCallback((roomId: string) => {
@@ -518,6 +523,7 @@ export function useRoom(): RoomConnection {
     fetchCodes,
     issueCode,
     createRoom,
+    setRoomImage,
     joinRoom,
     leaveRoom,
     listRooms,

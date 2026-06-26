@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Loader2, Search } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, Search } from "lucide-react";
 
-import { searchImageCandidates, type ImageCandidate } from "@/lib/imageSearch";
+import { searchAllImageCandidates, searchImageCandidates, type ImageCandidate } from "@/lib/imageSearch";
 
 type ImageSearchPanelProps = {
   /** Prefilled query (usually the item name); auto-searched on mount. */
@@ -15,7 +15,23 @@ export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearc
   const [query, setQuery] = useState(initialQuery);
   const [candidates, setCandidates] = useState<ImageCandidate[]>([]);
   const [loading, setLoading] = useState(false);
+  const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadMore = useCallback(async () => {
+    const q = query.trim();
+    if (!q) return;
+    setMore(true);
+    try {
+      const all = await searchAllImageCandidates(q);
+      setCandidates((cur) => {
+        const seen = new Set(cur.map((c) => c.thumbnail));
+        return [...cur, ...all.filter((c) => !seen.has(c.thumbnail))];
+      });
+    } finally {
+      setMore(false);
+    }
+  }, [query]);
 
   const run = useCallback(async (term: string) => {
     const q = term.trim();
@@ -100,6 +116,18 @@ export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearc
             </button>
           ))}
         </div>
+
+        {candidates.length > 0 && (
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={more}
+            className="mt-2.5 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[13px] font-semibold text-[#C4C8D2] disabled:opacity-50"
+          >
+            {more ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            더보기 (다른 소스)
+          </button>
+        )}
       </div>
     </>
   );

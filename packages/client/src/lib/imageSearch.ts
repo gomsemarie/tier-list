@@ -141,3 +141,21 @@ export async function searchImageCandidates(
 
   return openverseCandidates(q);
 }
+
+/**
+ * "더보기" — query *every* source in parallel and return the combined, deduped
+ * set (more variety than the first-source-wins default above).
+ */
+export async function searchAllImageCandidates(name: string): Promise<ImageCandidate[]> {
+  const q = name.trim();
+  if (!q) return [];
+  const safe = <T>(p: Promise<T[]>) => p.catch(() => [] as T[]);
+  const groups = await Promise.all([
+    safe(naverCandidates(q)),
+    safe(wikipediaCandidates(q, "ko")),
+    safe(wikipediaCandidates(q, "en")),
+    safe(openverseCandidates(q)),
+  ]);
+  const seen = new Set<string>();
+  return groups.flat().filter((c) => !seen.has(c.thumbnail) && seen.add(c.thumbnail));
+}

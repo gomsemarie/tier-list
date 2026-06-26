@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { monitorForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { extractClosestEdge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
-import { LogOut, Plus, RotateCcw, Search as SearchIcon, UserCog, Users } from "lucide-react";
+import { ArrowDownAZ, LogOut, Palette, Plus, RotateCcw, Search as SearchIcon, UserCog, Users } from "lucide-react";
 
-import { POOL_ID } from "@tier-list/shared";
+import { POOL_ID, TIER_COLORS } from "@tier-list/shared";
 import type { Item, Member } from "@tier-list/shared";
 import { isCardData, isListData } from "./dnd";
 import { AccountDialog } from "./AccountDialog";
@@ -17,6 +17,7 @@ import { ItemFormDialog } from "./ItemFormDialog";
 import { ItemPool } from "./ItemPool";
 import { LivePanel } from "./LivePanel";
 import { MemberOverlay } from "./MemberOverlay";
+import { MiniResult } from "./MiniResult";
 import { ModerationEffect } from "./ModerationEffect";
 import { PromotionEffect } from "./PromotionEffect";
 import { QuickVoteBar } from "./QuickVoteBar";
@@ -45,6 +46,7 @@ export function TierListPage() {
   const { state } = controller;
 
   const [search, setSearch] = useState("");
+  const [sortAZ, setSortAZ] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [menu, setMenu] = useState<{ item: Item; anchor: DOMRect } | null>(null);
   const [form, setForm] = useState<{ item?: Item } | null>(null);
@@ -55,7 +57,11 @@ export function TierListPage() {
   const [acct, setAcct] = useState(false);
   const [account, setAccount] = useState(false);
   const [memberView, setMemberView] = useState<Member | null>(null);
-  const [promo, setPromo] = useState<{ itemName: string; tier: { label: string; color: string; epithet: string } } | null>(null);
+  const [promo, setPromo] = useState<{
+    itemName: string;
+    tier: { label: string; color: string; epithet: string };
+    kind: "up" | "down" | "keep";
+  } | null>(null);
   const promoKeyRef = useRef<string | null>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
 
@@ -69,26 +75,30 @@ export function TierListPage() {
   const canModerate =
     !!room.authUser && (room.authUser.isAdmin || myMember?.role === "owner" || myMember?.role === "admin");
 
-  // Show the RANK UP effect once when a vote resolves into an upward move
-  // (opt-out members see the compact mini-result via QuickVoteBar instead).
+  // Show the tier-decided effect once whenever a vote resolves into a move
+  // (any direction, all members — heading adapts: 승급 / 강등 / 유지).
   const activeVote = room.activeVote;
-  const voteOptOut = room.voteOptOut;
   const tiers = state.tiers;
   useEffect(() => {
     if (!activeVote || activeVote.phase !== "result") return;
     const r = activeVote.result;
-    if (!r || r.outcome !== "moved" || !r.toLabel || voteOptOut) return;
+    if (!r || r.outcome !== "moved" || !r.toLabel) return;
     const key = `${activeVote.id}:${activeVote.round}`;
     if (promoKeyRef.current === key) return;
     const toIndex = tiers.findIndex((t) => t.label === r.toLabel);
+    if (toIndex === -1) return;
     const fromIndex = activeVote.currentTier
       ? tiers.findIndex((t) => t.label === activeVote.currentTier!.label)
       : Infinity;
-    if (toIndex === -1 || toIndex >= fromIndex) return; // only upward moves
+    const kind = fromIndex === Infinity || toIndex < fromIndex ? "up" : toIndex > fromIndex ? "down" : "keep";
     promoKeyRef.current = key;
     const t = tiers[toIndex];
-    setPromo({ itemName: activeVote.itemName, tier: { label: r.toLabel, color: r.toColor ?? t.color, epithet: t.epithet ?? "" } });
-  }, [activeVote, voteOptOut, tiers]);
+    setPromo({
+      itemName: activeVote.itemName,
+      tier: { label: r.toLabel, color: r.toColor ?? t.color, epithet: t.epithet ?? "" },
+      kind,
+    });
+  }, [activeVote, tiers]);
 
   const controllerRef = useRef(controller);
   controllerRef.current = controller;
@@ -117,7 +127,8 @@ export function TierListPage() {
   }, []);
 
   function itemsOf(listId: string): Item[] {
-    return (state.placement[listId] ?? []).map((id) => state.items[id]).filter(Boolean);
+    const list = (state.placement[listId] ?? []).map((id) => state.items[id]).filter(Boolean);
+    return sortAZ ? [...list].sort((a, b) => a.name.localeCompare(b.name, "ko")) : list;
   }
 
   function tierOf(itemId: string): string | null {
@@ -135,6 +146,12 @@ export function TierListPage() {
       const idx = tid ? state.tiers.findIndex((t) => t.id === tid) : -1;
       return { src: it.imageUrl ?? null, name: it.name, weight: idx < 0 ? 0.5 : idx / last };
     });
+  }
+
+  // Re-apply the current default palette to existing tiers (color only — keeps
+  // labels, epithets, and items). Fixes rooms created with an older palette.
+  function applyPalette() {
+    state.tiers.forEach((t, i) => controller.updateTier(t.id, { color: TIER_COLORS[i % TIER_COLORS.length] }));
   }
 
   function quickAdd() {
@@ -176,10 +193,10 @@ export function TierListPage() {
                   type="button"
                   title={m.name}
                   onClick={() => setMemberView(m)}
-                  className="-ml-2 rounded-md ring-2 ring-panel-head transition-transform first:ml-0 hover:z-10 hover:-translate-y-0.5"
+                  className="-ml-2.5 rounded-md ring-2 ring-panel-head transition-transform first:ml-0 hover:z-10 hover:-translate-y-0.5"
                   style={{ zIndex: 5 - i }}
                 >
-                  <Avatar name={m.name} src={m.avatar} frame={m.frame} size={26} />
+                  <Avatar name={m.name} src={m.avatar} frame={m.frame} size={36} />
                 </button>
               ))}
               <span className="ml-2 text-[12px] font-semibold text-muted-foreground">
@@ -229,7 +246,7 @@ export function TierListPage() {
               onClick={() => setAcct((v) => !v)}
               className="flex h-[34px] items-center gap-1.5 rounded-md border border-border bg-card pr-3 pl-1.5 text-[13px] font-bold text-foreground"
             >
-              <Avatar name={room.authUser.nickname} src={room.authUser.avatar} frame={room.authUser.frame} size={22} />
+              <Avatar name={room.authUser.nickname} src={room.authUser.avatar} frame={room.authUser.frame} size={26} />
               {room.authUser.nickname}
             </button>
             {acct && (
@@ -309,6 +326,43 @@ export function TierListPage() {
             </div>
           </div>
           <div className="flex-1" />
+          {room.room && (
+            <button
+              type="button"
+              onClick={() => room.setVoteOptOut(!room.voteOptOut)}
+              title="투표 간소화 — 켜면 큰 카드 대신 상단 미니 현황으로 보고, 원할 때만 한 표 던집니다"
+              className="flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold"
+              style={
+                room.voteOptOut
+                  ? { borderColor: "rgba(245,182,66,.5)", background: "rgba(245,182,66,.14)", color: "#F5B942" }
+                  : { borderColor: "var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }
+              }
+            >
+              <span className="size-[7px] rounded-full" style={{ background: room.voteOptOut ? "#F5B942" : "#6A707E" }} />
+              투표 간소화
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => window.confirm("티어 색상을 현재 기본 팔레트로 새로 적용할까요? (아이템·이름은 유지)") && applyPalette()}
+            title="티어 색상 새 팔레트로 적용 (아이템·이름 유지)"
+            className="grid size-9 place-items-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground"
+          >
+            <Palette className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSortAZ((v) => !v)}
+            title="사전순 보기 (켜면 드래그 잠금)"
+            className="flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold"
+            style={
+              sortAZ
+                ? { borderColor: "rgba(99,102,241,.5)", background: "rgba(99,102,241,.14)", color: "var(--indigo-fg)" }
+                : { borderColor: "var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }
+            }
+          >
+            <ArrowDownAZ className="size-4" /> 사전순
+          </button>
           <div className="relative w-60 max-w-full">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -334,6 +388,7 @@ export function TierListPage() {
                 canDelete={state.tiers.length > 1}
                 matchedIds={matchedIds}
                 selectedItemId={menu?.item.id ?? null}
+                dndEnabled={!sortAZ}
                 onSelectItem={(item, anchor) => setMenu({ item, anchor })}
                 onRelabel={(id, label) => controller.updateTier(id, { label })}
                 onReEpithet={(id, epithet) => controller.updateTier(id, { epithet })}
@@ -383,6 +438,7 @@ export function TierListPage() {
             items={itemsOf(POOL_ID)}
             matchedIds={matchedIds}
             selectedItemId={menu?.item.id ?? null}
+            dndEnabled={!sortAZ}
             onSelectItem={(item, anchor) => setMenu({ item, anchor })}
           />
         </div>
@@ -399,7 +455,6 @@ export function TierListPage() {
              !!room.authUser?.scStyle && room.authUser.unlocked.includes(room.authUser.scStyle)
            }
            canModerate={canModerate}
-           setVoteOptOut={room.setVoteOptOut}
            onCast={room.castVote}
            onSend={room.sendChat}
            onClearChat={() => room.moderate("clearChat")}
@@ -414,6 +469,8 @@ export function TierListPage() {
           anchor={menu.anchor}
           tiers={state.tiers}
           currentTierId={tierOf(menu.item.id)}
+          history={room.room?.history?.filter((h) => h.itemName === menu.item.name)}
+          members={room.room?.members}
           onMove={(tierId) => {
             controller.moveItem(menu.item.id, tierId, state.placement[tierId]?.length ?? 0);
             setMenu(null);
@@ -497,7 +554,7 @@ export function TierListPage() {
       )}
 
       {room.room && room.voteOptOut && room.activeVote && (
-        <QuickVoteBar vote={room.activeVote} onCast={room.castVote} />
+        <QuickVoteBar vote={room.activeVote} myUserId={room.authUser?.id} onCast={room.castVote} />
       )}
 
       {memberView && room.room && room.authUser && (() => {
@@ -523,14 +580,23 @@ export function TierListPage() {
         );
       })()}
 
-      {promo && (
-        <PromotionEffect
-          itemName={promo.itemName}
-          tier={promo.tier}
-          tiers={state.tiers}
-          onDismiss={() => setPromo(null)}
-        />
-      )}
+      {promo &&
+        (room.voteOptOut ? (
+          <MiniResult
+            itemName={promo.itemName}
+            tier={promo.tier}
+            kind={promo.kind}
+            onDone={() => setPromo(null)}
+          />
+        ) : (
+          <PromotionEffect
+            itemName={promo.itemName}
+            tier={promo.tier}
+            kind={promo.kind}
+            tiers={state.tiers}
+            onDismiss={() => setPromo(null)}
+          />
+        ))}
 
       {room.attack && (
         <AttackEffect
@@ -605,10 +671,11 @@ export function TierListPage() {
             room.clearError();
             room.joinRoom(c);
           }}
-          onCreate={(t, p) => {
+          onCreate={(t, p, img) => {
             room.clearError();
-            room.createRoom(t, p);
+            room.createRoom(t, p, img);
           }}
+          onSetImage={room.setRoomImage}
           onClose={() => {
             room.clearError();
             setLobby(false);

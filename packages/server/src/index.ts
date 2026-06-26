@@ -58,6 +58,8 @@ type Room = {
   createdAt: number;
   /** Public rooms show in the lobby; private rooms are code-join only. */
   isPublic: boolean;
+  /** Optional room cover image (data URL); "" when unset. */
+  image: string;
   state: TierListState;
   messages: ChatMessage[];
   /** Recent tier moves for the live "변경 이력" panel (in-memory, not persisted). */
@@ -233,6 +235,7 @@ for (const persisted of loadAllRooms()) {
     ownerId: persisted.ownerId,
     createdAt: persisted.createdAt,
     isPublic: persisted.isPublic,
+    image: persisted.image ?? "",
     state: persisted.state,
     messages: persisted.messages,
     history: [],
@@ -281,8 +284,8 @@ function makeRoomCode(): string {
   return code;
 }
 
-function message(author: string, text: string, kind: ChatKind): ChatMessage {
-  return { id: crypto.randomUUID(), author, text, ts: Date.now(), kind };
+function message(author: string, text: string, kind: ChatKind, authorId?: string): ChatMessage {
+  return { id: crypto.randomUUID(), author, text, ts: Date.now(), kind, authorId };
 }
 
 function snapshot(room: Room): RoomSnapshot {
@@ -327,6 +330,7 @@ function roomSummary(room: Room): RoomSummary {
     tierCount: room.state.tiers.length,
     memberCount: room.members.size,
     isPublic: room.isPublic,
+    image: room.image || undefined,
     createdAt: room.createdAt,
     updatedAt: Date.now(),
   };
@@ -1025,7 +1029,7 @@ io.on("connection", (socket: Socket) => {
           hint("사용법: /announce <내용>");
           return;
         }
-        pushMessage(room, message(name, arg, "announce"));
+        pushMessage(room, message(name, arg, "announce", authedUser?.id));
         broadcast(io, room);
         return;
       }
@@ -1041,7 +1045,7 @@ io.on("connection", (socket: Socket) => {
           hint("장착한 슈퍼챗 스타일이 없어요. 계정 관리에서 코드로 잠금 해제 후 장착하세요.");
           return;
         }
-        const msg = message(name, arg, "super");
+        const msg = message(name, arg, "super", authedUser.id);
         msg.style = style;
         msg.avatar = authedUser.avatar || undefined;
         msg.frame = authedUser.frame || undefined;
@@ -1294,7 +1298,7 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "room:create",
-    ({ title, isPublic }: { title?: string; isPublic?: boolean }) => {
+    ({ title, isPublic, image }: { title?: string; isPublic?: boolean; image?: string }) => {
       if (!authedUser) {
         socket.emit("room:error", "멀티플레이는 로그인이 필요합니다.");
         return;
@@ -1308,6 +1312,7 @@ io.on("connection", (socket: Socket) => {
         ownerId: authedUser.id,
         createdAt: Date.now(),
         isPublic: isPublic !== false, // default public
+        image: typeof image === "string" ? image.slice(0, 600_000) : "",
         state: createInitialState(),
         messages: [],
         history: [],
@@ -1349,6 +1354,18 @@ io.on("connection", (socket: Socket) => {
     room.title = (title ?? "").trim().slice(0, 40) || room.title;
     saveRoom(room);
     if (room.members.size > 0) io.to(room.id).emit("room:state", snapshot(room));
+    broadcastRoomList(io);
+  });
+
+  socket.on("room:setImage", ({ roomId, image }: { roomId?: string; image?: string }) => {
+    const room = rooms.get(String(roomId ?? "").toUpperCase().trim());
+    if (!room) return;
+    if (!authedUser || room.ownerId !== authedUser.id) {
+      socket.emit("room:error", "내가 만든 방만 관리할 수 있어요.");
+      return;
+    }
+    room.image = typeof image === "string" ? image.slice(0, 600_000) : "";
+    saveRoom(room);
     broadcastRoomList(io);
   });
 
@@ -1525,6 +1542,7 @@ io.on("connection", (socket: Socket) => {
         room.history.unshift({
           id: crypto.randomUUID(),
           actor: name,
+          actorId: authedUser.id,
           itemName: item.name,
           toLabel: tier.label,
           toColor: tier.color,
@@ -1551,7 +1569,7 @@ io.on("connection", (socket: Socket) => {
       runCommand(room, trimmed);
       return;
     }
-    pushMessage(room, message(name, trimmed, "user"));
+    pushMessage(room, message(name, trimmed, "user", authedUser.id));
     broadcast(io, room);
   });
 

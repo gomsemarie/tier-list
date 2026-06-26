@@ -14,7 +14,6 @@ type LivePanelProps = {
   voteOptOut: boolean;
   canSuper: boolean;
   canModerate: boolean;
-  setVoteOptOut: (enabled: boolean) => void;
   onCast: (tierId: string) => void;
   onSend: (text: string) => void;
   onClearChat: () => void;
@@ -50,7 +49,6 @@ export function LivePanel({
   voteOptOut,
   canSuper,
   canModerate,
-  setVoteOptOut,
   onCast,
   onSend,
   onClearChat,
@@ -66,7 +64,6 @@ export function LivePanel({
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
   }, [messages.length, tab]);
 
-  const roleOf = (name: string) => members.find((m) => m.name === name)?.role;
   const notice = [...messages].reverse().find((m) => m.kind === "announce");
 
   function send() {
@@ -98,20 +95,6 @@ export function LivePanel({
         <span className="size-1.5 rounded-full bg-[#5BD3A0]" />
         <span className="text-[11px] font-semibold text-[#6A707E]">{members.length}명</span>
         <div className="flex-1" />
-        <button
-          type="button"
-          onClick={() => setVoteOptOut(!voteOptOut)}
-          title="투표 참여/미참여 전환"
-          className="flex h-[26px] items-center gap-1.5 rounded-[5px] border px-2 text-[11px] font-bold"
-          style={
-            voteOptOut
-              ? { borderColor: "#2A303C", background: "#171B22", color: "#8A8F9C" }
-              : { borderColor: "rgba(91,211,160,.4)", background: "rgba(91,211,160,.12)", color: "#5BD3A0" }
-          }
-        >
-          <span className="size-[6px] rounded-full" style={{ background: voteOptOut ? "#6A707E" : "#5BD3A0" }} />
-          {voteOptOut ? "미참여" : "참여"}
-        </button>
         {canModerate && (
           <button
             type="button"
@@ -150,23 +133,26 @@ export function LivePanel({
           {history.length === 0 ? (
             <div className="grid flex-1 place-items-center text-[12px] text-[#4A4F5B]">아직 변경 이력이 없습니다.</div>
           ) : (
-            history.map((h) => (
+            history.map((h) => {
+              const actor = (h.actorId && members.find((m) => m.userId === h.actorId)?.name) || h.actor;
+              return (
               <div key={h.id} className="flex items-center gap-2 border-b border-[#1B1F27] py-[7px] last:border-0">
                 <span
                   className="grid size-[22px] shrink-0 place-items-center rounded-full text-[10px] font-extrabold text-white"
-                  style={{ background: swatch(h.actor) }}
+                  style={{ background: swatch(actor) }}
                 >
-                  {h.actor.slice(0, 1)}
+                  {actor.slice(0, 1)}
                 </span>
                 <div className="flex-1 text-[12px] text-[#C4C8D2]">
-                  <b className="text-[#A4AAB6]">{h.actor}</b> {h.itemName} →{" "}
+                  <b className="text-[#A4AAB6]">{actor}</b> {h.itemName} →{" "}
                   <span className="font-bold" style={{ color: h.toColor }}>
                     {h.toLabel}
                   </span>
                 </div>
                 <span className="text-[10px] text-[#5A6070]">{relTime(h.ts)}</span>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       ) : (
@@ -199,11 +185,24 @@ export function LivePanel({
                   </div>
                 );
               }
-              const badge = roleBadge(roleOf(m.author));
+              // Resolve the sender by stable id so renames show the *current*
+              // nickname/avatar/frame across all of their messages.
+              const mem = members.find((x) =>
+                m.authorId ? x.userId === m.authorId : x.name === m.author,
+              );
+              const displayName = mem?.name ?? m.author;
+              const badge = roleBadge(mem?.role);
               const sc = m.kind === "super" && m.style ? SC_STYLES[m.style] : undefined;
               const textCls = sc ? (sc.text ?? "text-white") : "text-[#D6DAE2]";
-              const mem = members.find((x) => x.name === m.author);
-              const av = <Avatar name={m.author} src={m.avatar} frame={m.frame} size={26} className="shrink-0" />;
+              const av = (
+                <Avatar
+                  name={displayName}
+                  src={m.avatar ?? mem?.avatar}
+                  frame={m.frame ?? mem?.frame}
+                  size={40}
+                  className="shrink-0"
+                />
+              );
               return (
                 <div
                   key={m.id}
@@ -211,7 +210,7 @@ export function LivePanel({
                 >
                   <div className="flex gap-2">
                     {mem ? (
-                      <button type="button" onClick={() => onOpenMember(mem)} className="shrink-0" title={`${m.author} 프로필`}>
+                      <button type="button" onClick={() => onOpenMember(mem)} className="shrink-0" title={`${displayName} 프로필`}>
                         {av}
                       </button>
                     ) : (
@@ -219,7 +218,7 @@ export function LivePanel({
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="mb-0.5 flex items-center gap-1.5">
-                        <span className={`text-[12px] font-bold ${sc ? textCls : "text-[#EDEAE2]"}`}>{m.author}</span>
+                        <span className={`text-[12px] font-bold ${sc ? textCls : "text-[#EDEAE2]"}`}>{displayName}</span>
                         {badge && (
                           <span className="rounded-[3px] px-1.5 py-px text-[9px] font-bold" style={{ background: badge.bg, color: badge.fg }}>
                             {badge.label}

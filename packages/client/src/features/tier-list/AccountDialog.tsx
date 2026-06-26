@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Camera, X } from "lucide-react";
 
 import { FRAMES, PERKS, RARITY_META, SC_STYLES } from "@tier-list/shared";
 import type { AuthUser, CodeInfo, IssueCodeResult, RedeemResult, UpdateResult } from "@tier-list/shared";
@@ -7,7 +7,7 @@ import { Avatar } from "./Avatar";
 
 type AccountDialogProps = {
   user: AuthUser;
-  onUpdateProfile: (patch: { nickname?: string }) => Promise<UpdateResult>;
+  onUpdateProfile: (patch: { nickname?: string; avatar?: string }) => Promise<UpdateResult>;
   onEquip: (patch: { frame?: string; scStyle?: string }) => Promise<UpdateResult>;
   onRedeem: (code: string) => Promise<RedeemResult>;
   onIssueCode: (perks: string[]) => Promise<IssueCodeResult>;
@@ -34,10 +34,32 @@ export function AccountDialog({
   const [issuePerks, setIssuePerks] = useState<Set<string>>(new Set());
   const [issued, setIssued] = useState<string | null>(null);
   const [codes, setCodes] = useState<CodeInfo[]>([]);
+  const avatarRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (user.isAdmin) void onFetchCodes().then(setCodes);
   }, [user.isAdmin, onFetchCodes]);
+
+  // Downscale the picked image to a 128px square (under the server's size cap).
+  function pickAvatar(file?: File) {
+    if (!file) return;
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const S = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = S;
+      canvas.height = S;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        const side = Math.min(img.width, img.height);
+        ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, S, S);
+        void onUpdateProfile({ avatar: canvas.toDataURL("image/jpeg", 0.85) });
+      }
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }
 
   async function issue() {
     if (issuePerks.size === 0) return;
@@ -101,7 +123,27 @@ export function AccountDialog({
 
         <div className="p-[18px]">
           <div className="mb-[18px] flex items-center gap-3.5">
-            <Avatar name={user.nickname} src={user.avatar} frame={user.frame} size={60} />
+            <div className="relative shrink-0">
+              <Avatar name={user.nickname} src={user.avatar} frame={user.frame} size={60} />
+              <button
+                type="button"
+                onClick={() => avatarRef.current?.click()}
+                title="프로필 이미지 변경"
+                className="absolute -right-1 -bottom-1 grid size-[22px] place-items-center rounded-full border border-[#2A303C] bg-[#161B22] text-[#A5B4FC]"
+              >
+                <Camera className="size-3" />
+              </button>
+              <input
+                ref={avatarRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  pickAvatar(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </div>
             <div className="flex-1">
               <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">닉네임</label>
               <input
@@ -113,13 +155,13 @@ export function AccountDialog({
           </div>
 
           <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 아바타 프레임</label>
-          <div className="mb-4 flex flex-wrap gap-2">
-            <FrameOption selected={!user.frame} onClick={() => onEquip({ frame: "" })}>
-              <Avatar name={user.nickname} src={user.avatar} size={34} spin={false} />
+          <div className="mb-4 flex flex-wrap gap-2.5">
+            <FrameOption selected={!user.frame} label="없음" onClick={() => onEquip({ frame: "" })}>
+              <Avatar name={user.nickname} src={user.avatar} size={44} />
             </FrameOption>
             {ownedFrames.map((id) => (
-              <FrameOption key={id} selected={user.frame === id} title={FRAMES[id].name} onClick={() => onEquip({ frame: id })}>
-                <Avatar name={user.nickname} src={user.avatar} frame={id} size={34} spin={false} />
+              <FrameOption key={id} selected={user.frame === id} label={FRAMES[id].name} onClick={() => onEquip({ frame: id })}>
+                <Avatar name={user.nickname} src={user.avatar} frame={id} size={44} />
               </FrameOption>
             ))}
             {ownedFrames.length === 0 && (
@@ -288,24 +330,29 @@ export function AccountDialog({
 
 function FrameOption({
   selected,
-  title,
+  label,
   onClick,
   children,
 }: {
   selected: boolean;
-  title?: string;
+  label: string;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className="grid size-[46px] place-items-center rounded-[6px] border"
-      style={{ borderColor: selected ? "#6366F1" : "#242a3a", background: selected ? "rgba(99,102,241,.12)" : "#0E1117" }}
-    >
-      {children}
+    <button type="button" title={label} onClick={onClick} className="flex flex-col items-center gap-1">
+      <span
+        className="grid size-[58px] place-items-center rounded-[8px] border"
+        style={{ borderColor: selected ? "#6366F1" : "#242a3a", background: selected ? "rgba(99,102,241,.12)" : "#0E1117" }}
+      >
+        {children}
+      </span>
+      <span
+        className="max-w-[58px] truncate text-[9px] font-semibold"
+        style={{ color: selected ? "#A5B4FC" : "#6A707E" }}
+      >
+        {label}
+      </span>
     </button>
   );
 }

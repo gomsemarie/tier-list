@@ -5,6 +5,9 @@ export type ChatKind = "user" | "system" | "action" | "announce" | "super";
 export type ChatMessage = {
   id: string;
   author: string;
+  /** Stable account id of the sender — lets the UI show the sender's *current*
+   *  nickname/avatar/frame even after a rename. Absent on system messages. */
+  authorId?: string;
   text: string;
   ts: number;
   kind: ChatKind;
@@ -67,6 +70,8 @@ export type ModeratePayload = {
 export type ChangeEntry = {
   id: string;
   actor: string;
+  /** Stable account id of the mover — lets the UI show their *current* nickname. */
+  actorId?: string;
   itemName: string;
   toLabel: string;
   toColor: string;
@@ -96,6 +101,8 @@ export type RoomSummary = {
   memberCount: number;
   /** Public rooms appear in the lobby; private rooms are code-join only. */
   isPublic: boolean;
+  /** Optional room cover image (data URL). */
+  image?: string;
   createdAt: number;
   updatedAt: number;
 };

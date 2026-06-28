@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Eraser, History, MessagesSquare, Send, SlashSquare, Sparkles } from "lucide-react";
+import { ChevronRight, Eraser, History, MessagesSquare, Send, SlashSquare, Sparkles, Swords } from "lucide-react";
 
 import { COMMANDS, findCommand, SC_STYLES } from "@tier-list/shared";
 import type { ChangeEntry, ChatMessage, CommandSpec, Member, VoteSnapshot } from "@tier-list/shared";
@@ -195,6 +195,64 @@ export function LivePanel({
               <div className="grid flex-1 place-items-center text-[12px] text-[#4A4F5B]">아직 메시지가 없습니다.</div>
             )}
             {messages.map((m) => {
+              if (m.rally) {
+                const r = m.rally;
+                const gap = Math.abs(r.aLevel - r.bLevel);
+                const tie = !r.ended && gap === 0;
+                // Lower level = winning (opponent more likely to crack next).
+                const aWin = r.ended ? r.winner === r.a : r.aLevel < r.bLevel;
+                const bWin = r.ended ? r.winner === r.b : r.bLevel < r.aLevel;
+                // Tug-of-war boundary: leans hard even on a 1-level gap (1−0.6^gap).
+                const pull = Math.sign(r.bLevel - r.aLevel) * (1 - Math.pow(0.6, gap));
+                const aShare = r.ended ? (aWin ? 0.96 : 0.04) : (1 + pull) / 2;
+                const col = (win: boolean) => (tie ? "#7480A0" : win ? "#5BD3A0" : "#FF4C3A");
+                const lead = aWin ? r.a : r.b;
+                const strength = gap >= 4 ? "압도" : gap >= 2 ? "우세" : "근소 우세";
+                return (
+                  <div
+                    key={m.id}
+                    className="rounded-[2px] border-2 border-[#2A3142] bg-[#0E1117] px-2.5 py-2 transition-opacity"
+                    style={{ boxShadow: "2px 2px 0 rgba(0,0,0,.5)", opacity: r.ended ? 0.7 : 1 }}
+                  >
+                    <div className="mb-1.5 flex items-center gap-1.5">
+                      <Swords
+                        className="size-3.5 shrink-0 text-[#FF4C3A]"
+                        style={{ animation: r.ended ? undefined : "blink 1s steps(1) infinite" }}
+                      />
+                      <span className="font-pixel text-[11px] font-bold text-[#EDEAE2]">난투</span>
+                      {r.ended ? (
+                        <span className="font-arcade rounded-[2px] bg-[#3A2226] px-1.5 py-px text-[9px] text-[#9A6B70]">종료</span>
+                      ) : (
+                        <span className="font-arcade rounded-[2px] bg-[#FF4C3A] px-1.5 py-px text-[9px] text-white">LIVE</span>
+                      )}
+                      <div className="flex-1" />
+                      <span className="font-arcade text-[11px] text-[#A5B4FC]">{r.count}합</span>
+                    </div>
+                    <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-bold">
+                      <span className="min-w-0 truncate" style={{ color: col(aWin) }}>
+                        {r.a} <span className="font-arcade text-[9px]">LV.{r.aLevel}</span>
+                      </span>
+                      <span className="min-w-0 truncate text-right" style={{ color: col(bWin) }}>
+                        <span className="font-arcade text-[9px]">LV.{r.bLevel}</span> {r.b}
+                      </span>
+                    </div>
+                    <div className="relative flex h-3 overflow-hidden rounded-[2px] border-2 border-black">
+                      <div style={{ width: `${aShare * 100}%`, background: col(aWin), transition: "width .3s" }} />
+                      <div className="flex-1" style={{ background: col(bWin) }} />
+                      <div
+                        className="absolute top-0 bottom-0 w-[2px] bg-white"
+                        style={{ left: `${aShare * 100}%`, boxShadow: "0 0 4px #fff", transition: "left .3s" }}
+                      />
+                    </div>
+                    <div
+                      className="font-pixel mt-1 text-center text-[9px] font-bold"
+                      style={{ color: r.ended ? "#FDE047" : tie ? "#9AD8E8" : "#fff" }}
+                    >
+                      {r.ended ? `🏆 ${r.winner} 승리!` : tie ? "접전!" : `${lead} ${strength}`}
+                    </div>
+                  </div>
+                );
+              }
               if (m.kind !== "user" && m.kind !== "super") {
                 return (
                   <div key={m.id} className="flex items-center gap-1.5 text-[11px] text-[#7A808E]">

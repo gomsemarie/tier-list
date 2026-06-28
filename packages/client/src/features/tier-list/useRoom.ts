@@ -69,7 +69,9 @@ export type RoomConnection = {
   attack: { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null;
   clearAttack: () => void;
   /** The attacked user reflects the attack back to its sender. */
-  parryAttack: (attackerId: string, level?: number) => void;
+  parryAttack: (attackerId: string, escalate: boolean) => void;
+  /** Report that this player got hit (parry missed) — finalizes the rally. */
+  rallyHit: (attackerId: string) => void;
   /** Set briefly when anyone is timed-banned (drives the center-top game effect). */
   moderation: (ModerationEffect & { at: number }) | null;
   clearModeration: () => void;
@@ -452,8 +454,11 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const clearAttack = useCallback(() => setAttack(null), []);
-  const parryAttack = useCallback((attackerId: string, level?: number) => {
-    socketRef.current?.emit("attack:parry", { attackerId, level });
+  const parryAttack = useCallback((attackerId: string, escalate: boolean) => {
+    socketRef.current?.emit("attack:parry", { attackerId, escalate });
+  }, []);
+  const rallyHit = useCallback((attackerId: string) => {
+    socketRef.current?.emit("attack:hit", { attackerId });
   }, []);
   const clearModeration = useCallback(() => setModeration(null), []);
 
@@ -508,6 +513,7 @@ export function useRoom(): RoomConnection {
     attack,
     clearAttack,
     parryAttack,
+    rallyHit,
     moderation,
     clearModeration,
     voteOptOut,

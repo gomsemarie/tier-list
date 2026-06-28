@@ -71,6 +71,66 @@ function naverImageProxy(env: Record<string, string>): Plugin {
   };
 }
 
+/**
+ * Dev-only OpenGraph fetcher. GET /api/og?url=… → { url, title, description,
+ * image, siteName }. Fetches the page HTML server-side (avoids client CORS) and
+ * scrapes og:* / <title> / favicon. Port to a serverless function for prod.
+ */
+function ogProxy(): Plugin {
+  const decode = (s: string) =>
+    s
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .trim();
+  const meta = (html: string, prop: string) => {
+    const a = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']*)["']`, "i").exec(html);
+    const b = new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']${prop}["']`, "i").exec(html);
+    return decode((a?.[1] ?? b?.[1] ?? ""));
+  };
+  return {
+    name: "og-proxy",
+    configureServer(server) {
+      server.middlewares.use("/api/og", async (req, res) => {
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        try {
+          const reqUrl = new URL(req.url ?? "", "http://localhost");
+          const target = reqUrl.searchParams.get("url")?.trim() ?? "";
+          const u = new URL(target);
+          if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("bad protocol");
+
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 6000);
+          const r = await fetch(u, {
+            signal: ctrl.signal,
+            redirect: "follow",
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; TierListBot/1.0)" },
+          }).finally(() => clearTimeout(t));
+
+          const html = (await r.text()).slice(0, 300_000);
+          const title = meta(html, "og:title") || decode(/<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1] ?? "");
+          let image = meta(html, "og:image");
+          if (image && !/^https?:\/\//i.test(image)) image = new URL(image, u).href;
+          res.end(
+            JSON.stringify({
+              url: u.href,
+              title: title || u.hostname,
+              description: meta(html, "og:description"),
+              image,
+              siteName: meta(html, "og:site_name") || u.hostname,
+            }),
+          );
+        } catch (e) {
+          res.statusCode = 200; // graceful — client falls back to a bare card
+          res.end(JSON.stringify({ error: String(e) }));
+        }
+      });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -97,6 +157,7 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       tsconfigPaths(),
       naverImageProxy(env),
+      ogProxy(),
     ],
     server: {
       // host: true → bind to 0.0.0.0 so other devices/LAN/tunnels can connect.

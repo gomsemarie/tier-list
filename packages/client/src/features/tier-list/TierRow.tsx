@@ -47,6 +47,19 @@ export function TierRow({
   const [over, setOver] = useState(false);
   const [hover, setHover] = useState(false);
 
+  // Edit label/epithet locally and commit on blur — committing on every
+  // keystroke round-trips to the server in a room and breaks Korean IME.
+  const [labelDraft, setLabelDraft] = useState(tier.label);
+  const [epithetDraft, setEpithetDraft] = useState(tier.epithet ?? "");
+  const editingLabel = useRef(false);
+  const editingEpithet = useRef(false);
+  useEffect(() => {
+    if (!editingLabel.current) setLabelDraft(tier.label);
+  }, [tier.label]);
+  useEffect(() => {
+    if (!editingEpithet.current) setEpithetDraft(tier.epithet ?? "");
+  }, [tier.epithet]);
+
   useEffect(() => {
     const el = dropRef.current;
     if (!el || !dndEnabled) return;
@@ -74,16 +87,28 @@ export function TierRow({
           {items.length}
         </span>
         <input
-          value={tier.label}
-          onChange={(e) => onRelabel(tier.id, e.target.value)}
+          value={labelDraft}
+          onChange={(e) => setLabelDraft(e.target.value)}
+          onFocus={() => (editingLabel.current = true)}
+          onBlur={() => {
+            editingLabel.current = false;
+            if (labelDraft !== tier.label) onRelabel(tier.id, labelDraft);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()}
           aria-label="티어 이름"
           maxLength={4}
           className="font-display w-full truncate bg-transparent text-center leading-none text-white caret-white outline-none"
-          style={{ fontSize: emblemFont(tier.label), textShadow: "0 1px 3px rgba(0,0,0,.4)" }}
+          style={{ fontSize: emblemFont(labelDraft), textShadow: "0 1px 3px rgba(0,0,0,.4)" }}
         />
         <input
-          value={tier.epithet ?? ""}
-          onChange={(e) => onReEpithet(tier.id, e.target.value)}
+          value={epithetDraft}
+          onChange={(e) => setEpithetDraft(e.target.value)}
+          onFocus={() => (editingEpithet.current = true)}
+          onBlur={() => {
+            editingEpithet.current = false;
+            if (epithetDraft !== (tier.epithet ?? "")) onReEpithet(tier.id, epithetDraft);
+          }}
+          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && e.currentTarget.blur()}
           aria-label="티어 등급명"
           maxLength={6}
           placeholder="등급명"
@@ -91,7 +116,7 @@ export function TierRow({
         />
         <div
           className={cn(
-            "absolute bottom-[5px] flex items-center justify-center gap-1.5 transition-opacity",
+            "absolute top-1 left-1 flex items-center gap-1 transition-opacity",
             hover ? "opacity-100" : "pointer-events-none opacity-0",
           )}
         >

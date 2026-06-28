@@ -335,7 +335,9 @@ export function TierListPage() {
         {/* Board header */}
         <div className="flex flex-wrap items-end gap-x-4 gap-y-2.5 px-5 pt-4 pb-3">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight">티어리스트</h1>
+            <h1 className="max-w-[420px] truncate text-2xl font-extrabold tracking-tight">
+              {room.room ? room.room.title : "티어리스트"}
+            </h1>
             <div className="mt-2 flex items-center gap-x-3 text-[13px]">
               <span className="font-semibold text-muted-foreground">
                 <b className="text-indigo-fg tabular-nums">{ranked}</b> / {total} 배치
@@ -539,7 +541,7 @@ export function TierListPage() {
 
       {menu && (
         <TierPopover
-          item={menu.item}
+          item={state.items[menu.item.id] ?? menu.item}
           anchor={menu.anchor}
           tiers={state.tiers}
           currentTierId={tierOf(menu.item.id)}
@@ -569,6 +571,7 @@ export function TierListPage() {
             controller.removeItem(menu.item.id);
             setMenu(null);
           }}
+          onSetLinks={(links) => controller.updateItem(menu.item.id, { links })}
           onClose={() => setMenu(null)}
         />
       )}
@@ -683,7 +686,8 @@ export function TierListPage() {
           parryable={room.attack.parryable}
           level={room.attack.level}
           items={attackItems()}
-          onParry={() => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, room.attack.level)}
+          onParry={(escalate) => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, escalate)}
+          onHit={() => room.attack?.byUserId && room.rallyHit(room.attack.byUserId)}
           onDone={room.clearAttack}
         />
       )}

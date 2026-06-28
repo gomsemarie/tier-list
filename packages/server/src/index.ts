@@ -88,6 +88,8 @@ type Room = {
   voteTimer: ReturnType<typeof setTimeout> | null;
   /** Account ids that opted out of votes (no overlay, excluded from counts). */
   voteOptOut: Set<string>;
+  /** Active attack/parry rally per user-pair → the chat message id it updates. */
+  rallies: Map<string, string>;
 };
 
 type VoteState = {
@@ -123,12 +125,13 @@ function voteDurationMs(seconds: unknown): number {
 
 const MAX_AVATAR = 300_000; // cap data-url size
 
-// Attack rate limits (ephemeral).
+// Attack rate limits (ephemeral). Difficulty only ramps along a parry *relay*.
 const ATTACK_COOLDOWN_MS = 5_000; // per (attacker → target) pair
-const PARRY_RAMP_MS = 30_000; // re-attacks within this window ramp parry difficulty
-const MAX_PARRY_LEVEL = 5;
+const MAX_PARRY_LEVEL = 50; // effectively uncapped — the rally ends when someone misses
 const attackCooldownPair = new Map<string, number>(); // `${roomId}:${attacker}:${target}` -> ts
-const victimStreak = new Map<string, { ts: number; level: number }>(); // `${roomId}:${victim}`
+// Per-person parry difficulty: how many inner-reflects the *opponent* landed on
+// this player in the current rally. Keyed `${roomId}:${pairKey}:${victimId}`.
+const parryLevel = new Map<string, number>();
 
 // --- Password hashing (Node crypto scrypt — no external deps) ----------------
 function hashPassword(password: string): { salt: string; hash: string } {
@@ -260,6 +263,7 @@ for (const persisted of loadAllRooms()) {
     vote: null,
     voteTimer: null,
     voteOptOut: new Set(),
+    rallies: new Map(),
   });
 }
 console.log(`restored ${rooms.size} room(s) from disk`);
@@ -300,6 +304,25 @@ function makeRoomCode(): string {
 
 function message(author: string, text: string, kind: ChatKind, authorId?: string): ChatMessage {
   return { id: crypto.randomUUID(), author, text, ts: Date.now(), kind, authorId };
+}
+
+/** Order-independent key for a pair of users (one rally per pair). */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Build the rally card payload: both players + their own difficulty levels. */
+function buildRally(room: Room, pk: string, count: number) {
+  const [id1, id2] = pk.split("|");
+  const nameOf = (id: string) =>
+    [...room.members.values()].find((m) => m.userId === id)?.name ?? "참가자";
+  return {
+    a: nameOf(id1),
+    b: nameOf(id2),
+    aLevel: parryLevel.get(`${room.id}:${pk}:${id1}`) ?? 0,
+    bLevel: parryLevel.get(`${room.id}:${pk}:${id2}`) ?? 0,
+    count,
+  };
 }
 
 function snapshot(room: Room): RoomSnapshot {
@@ -1218,9 +1241,10 @@ io.on("connection", (socket: Socket) => {
     },
   );
 
-  // Parry: reflect the attack back to the attacker. The rally can keep going —
-  // each reflected attack is still parryable, but one level harder for both.
-  socket.on("attack:parry", ({ attackerId, level }: { attackerId?: string; level?: number }) => {
+  // Parry: reflect the attack back to the attacker. Difficulty is per-person —
+  // an inner-zone parry (escalate) raises only the *attacker's* difficulty; an
+  // outer parry returns it at the attacker's current difficulty.
+  socket.on("attack:parry", ({ attackerId, escalate }: { attackerId?: string; escalate?: boolean }) => {
     if (!currentRoom || !authedUser) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
@@ -1228,7 +1252,11 @@ io.on("connection", (socket: Socket) => {
     if (!aid || aid === authedUser.id) return;
     const attacker = [...room.members.values()].find((m) => m.userId === aid);
     if (!attacker) return; // attacker left — nothing to reflect to
-    const nextLevel = Math.min(MAX_PARRY_LEVEL, Math.max(0, Math.floor(Number(level ?? 0))) + 1);
+    const pk = pairKey(authedUser.id, aid);
+    const qKey = `${room.id}:${pk}:${aid}`;
+    const cur = parryLevel.get(qKey) ?? 0;
+    const nextLevel = Math.min(MAX_PARRY_LEVEL, escalate ? cur + 1 : cur);
+    parryLevel.set(qKey, nextLevel);
     for (const [sid, m] of room.members) {
       if (m.userId === aid)
         io.to(sid).emit("room:attacked", {
@@ -1238,10 +1266,38 @@ io.on("connection", (socket: Socket) => {
           level: nextLevel,
         });
     }
-    pushMessage(
-      room,
-      message("system", `🛡️ ${name} 님이 ${attacker.name} 님의 공격을 패링해 되돌렸습니다! (LV.${nextLevel})`, "action"),
-    );
+    // Update the rally card (count++ , new attacker = the parrier) — no new line.
+    const mid = room.rallies.get(pk);
+    const existing = mid ? room.messages.find((m) => m.id === mid) : undefined;
+    if (existing?.rally) {
+      existing.rally = buildRally(room, pk, existing.rally.count + 1);
+    } else {
+      const m2 = message(name, "", "action");
+      m2.rally = buildRally(room, pk, 1);
+      pushMessage(room, m2);
+      room.rallies.set(pk, m2.id);
+    }
+    broadcast(io, room);
+  });
+
+  // A player got hit (parry missed) → finalize the rally card: winner = attacker.
+  socket.on("attack:hit", ({ attackerId }: { attackerId?: string }) => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const aid = String(attackerId ?? "");
+    if (!aid) return;
+    const winner = [...room.members.values()].find((m) => m.userId === aid);
+    const pk = pairKey(authedUser.id, aid);
+    const mid = room.rallies.get(pk);
+    const existing = mid ? room.messages.find((m) => m.id === mid) : undefined;
+    if (existing?.rally && !existing.rally.ended) {
+      existing.rally = { ...existing.rally, ended: true, winner: winner?.name ?? "?" };
+    }
+    room.rallies.delete(pk);
+    parryLevel.delete(`${room.id}:${pk}:${authedUser.id}`);
+    parryLevel.delete(`${room.id}:${pk}:${aid}`);
+    attackCooldownPair.delete(`${room.id}:${aid}:${authedUser.id}`); // let a rematch start at once
     broadcast(io, room);
   });
 
@@ -1346,6 +1402,7 @@ io.on("connection", (socket: Socket) => {
         vote: null,
         voteTimer: null,
         voteOptOut: new Set(),
+        rallies: new Map(),
       };
       rooms.set(id, room);
       saveRoom(room); // persist immediately so the visibility flag survives
@@ -1439,22 +1496,24 @@ io.on("connection", (socket: Socket) => {
         return;
       }
       attackCooldownPair.set(cdKey, now);
-      // Parry-difficulty streak: re-attacks within 30s ramp the level (the timer
-      // resets on every hit); after 30s with no attack it drops back to 0.
-      const vKey = `${room.id}:${tid}`;
-      const prev = victimStreak.get(vKey);
-      const level = prev && now - prev.ts < PARRY_RAMP_MS ? Math.min(prev.level + 1, MAX_PARRY_LEVEL) : 0;
-      victimStreak.set(vKey, { ts: now, level });
+      // Fresh attack → reset both players' per-person difficulty for this rally.
+      const pk = pairKey(authedUser.id, tid);
+      parryLevel.set(`${room.id}:${pk}:${authedUser.id}`, 0);
+      parryLevel.set(`${room.id}:${pk}:${tid}`, 0);
       for (const [sid, m] of room.members) {
         if (m.userId === tid)
           io.to(sid).emit("room:attacked", {
             by: name,
             byUserId: authedUser.id,
             parryable: true,
-            level,
+            level: 0,
           });
       }
-      pushMessage(room, message("system", `⚡ ${name} 님이 ${tgt?.name ?? "참가자"} 님을 공격했습니다!`, "action"));
+      // Start a fresh rally card for this pair (updates in place from here on).
+      const rallyMsg = message(name, "", "action");
+      rallyMsg.rally = buildRally(room, pk, 1);
+      pushMessage(room, rallyMsg);
+      room.rallies.set(pk, rallyMsg.id);
       broadcast(io, room);
       return;
     }

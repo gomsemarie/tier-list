@@ -8,7 +8,7 @@ export type TierListController = {
   state: TierListState;
   addItem(name: string, imageUrl: string | null): void;
   addItems(entries: { name: string; imageUrl: string | null }[]): void;
-  updateItem(id: string, patch: Partial<Pick<Item, "name" | "imageUrl">>): void;
+  updateItem(id: string, patch: Partial<Pick<Item, "name" | "imageUrl" | "links">>): void;
   removeItem(id: string): void;
   moveItem(itemId: string, targetListId: string, targetIndex: number): void;
   addTier(): void;

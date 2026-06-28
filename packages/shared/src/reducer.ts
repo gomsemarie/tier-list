@@ -10,7 +10,7 @@ import type { Item, TierChange, TierListState } from "./types";
 export type Action =
   | { type: "addItem"; name: string; imageUrl: string | null; by?: string }
   | { type: "addItems"; entries: { name: string; imageUrl: string | null }[]; by?: string }
-  | { type: "updateItem"; id: string; patch: Partial<Pick<Item, "name" | "imageUrl">> }
+  | { type: "updateItem"; id: string; patch: Partial<Pick<Item, "name" | "imageUrl" | "links">> }
   | { type: "removeItem"; id: string }
   | {
       type: "moveItem";

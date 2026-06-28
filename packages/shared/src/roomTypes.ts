@@ -15,6 +15,10 @@ export type ChatMessage = {
   style?: string;
   avatar?: string;
   frame?: string;
+  /** Attack/parry rally — one message that updates in place. aLevel/bLevel are
+   *  each player's *own* difficulty (how many inner-reflects they're taking).
+   *  When `ended`, `winner` is the survivor's name (the other got hit). */
+  rally?: { a: string; b: string; aLevel: number; bLevel: number; count: number; ended?: boolean; winner?: string };
 };
 
 /** Effective role within a room. Admin outranks owner outranks member. */

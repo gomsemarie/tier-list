@@ -8,9 +8,12 @@ type AttackEffectProps = {
   by: string;
   /** True for a fresh attack (can be parried); false for a reflected hit. */
   parryable?: boolean;
-  /** Difficulty 0–5: rises when re-attacked within 30s (faster marker, tighter zones). */
+  /** Relay difficulty 0–5 (faster marker, tighter inner zone). */
   level?: number;
-  onParry?: () => void;
+  /** Reflect the attack back; `escalate` = inner zone (level +1), else same level. */
+  onParry?: (escalate: boolean) => void;
+  /** Called once when this player gets hit (parry missed) — ends the rally. */
+  onHit?: () => void;
   onDone: () => void;
   items?: AttackItem[];
 };
@@ -25,37 +28,47 @@ function hueOf(name: string): number {
   return ((h % 360) + 360) % 360;
 }
 
-type Phase = "pending" | "perfect" | "good" | "miss" | "hit";
+type Phase = "pending" | "reflect" | "parry" | "miss" | "hit";
 
 /** Full-screen ATTACK!! effect with a parry mini-game (handoff `attackEl`). */
-export function AttackEffect({ attackKey, by, parryable = false, level = 0, onParry, onDone, items = [] }: AttackEffectProps) {
+export function AttackEffect({ attackKey, by, parryable = false, level = 0, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
   const [phase, setPhase] = useState<Phase>(parryable ? "pending" : "hit");
-  const [pos, setPos] = useState(0);
   const posRef = useRef(0);
+  const markerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | undefined>(undefined);
   const parriedRef = useRef(false);
 
-  const success = phase === "perfect" || phase === "good";
+  const success = phase === "reflect" || phase === "parry"; // both reflect back
   const resolved = phase !== "pending";
 
-  // Difficulty: low levels are forgiving (slow marker, wide zones); ramps up.
-  const lv = Math.min(5, Math.max(0, Math.floor(level)));
-  const duration = Math.max(650, 1900 - lv * 250);
-  const goodHalf = Math.max(6, 18 - lv * 2.4); // % each side of center (50)
-  const perfectHalf = Math.max(2, 8 - lv * 1.2);
+  // Two zones, both reflect: the OUTER (wide) zone returns the attack at the same
+  // difficulty; the inner narrow zone returns it one level harder. Only the inner
+  // zone ramps — narrower + faster each relay (consistent step). Miss → you're hit.
+  const lv = Math.max(0, Math.floor(level)); // no cap — the rally must end
+  // Each relay: zones shrink to 90% of current (converging), marker speeds up
+  // 10% compounding. Asymptotic → eventually too hard, so the rally ends.
+  const shrink = Math.pow(0.9, lv);
+  const duration = Math.max(200, 1500 / Math.pow(1.1, lv));
+  const reflectHalf = Math.max(0.6, 14 * shrink); // inner, % each side of center
+  const blockHalf = Math.max(reflectHalf + 1, 28 * shrink); // outer (wider)
 
-  // Marker sweep while waiting for the parry input.
+  // Marker ping-pongs (0→100→0…) over a fixed total window. `duration` is one
+  // traverse — harder levels are faster, so they bounce more times (more
+  // chances to hit the narrow zone) before the window runs out.
+  const TOTAL_MS = 3000;
   useEffect(() => {
     if (phase !== "pending") return;
     const start = performance.now();
     const tick = (now: number) => {
-      const p = Math.min(100, ((now - start) / duration) * 100);
-      posRef.current = p;
-      setPos(p);
-      if (p >= 100) {
+      const elapsed = now - start;
+      if (elapsed >= TOTAL_MS) {
         setPhase("miss");
         return;
       }
+      const tri = (elapsed / duration) % 2; // 0..2 triangle
+      const p = (tri <= 1 ? tri : 2 - tri) * 100;
+      posRef.current = p;
+      if (markerRef.current) markerRef.current.style.left = `calc(${p}% - 3px)`;
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -68,14 +81,23 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
     setPhase((cur) => {
       if (cur !== "pending") return cur;
       const d = Math.abs(posRef.current - 50);
-      const ok = d <= goodHalf;
-      if (ok && !parriedRef.current) {
-        parriedRef.current = true;
-        onParry?.();
+      if (d <= reflectHalf) {
+        if (!parriedRef.current) {
+          parriedRef.current = true;
+          onParry?.(true); // inner → reflect harder (+1 level)
+        }
+        return "reflect";
       }
-      return d <= perfectHalf ? "perfect" : ok ? "good" : "miss";
+      if (d <= blockHalf) {
+        if (!parriedRef.current) {
+          parriedRef.current = true;
+          onParry?.(false); // outer → reflect at the same level
+        }
+        return "parry";
+      }
+      return "miss";
     });
-  }, [onParry, goodHalf, perfectHalf]);
+  }, [onParry, reflectHalf, blockHalf]);
 
   useEffect(() => {
     if (phase !== "pending") return;
@@ -88,6 +110,15 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, tryParry]);
+
+  // Got hit (parry missed) → end the rally once.
+  const hitFiredRef = useRef(false);
+  useEffect(() => {
+    if ((phase === "miss" || phase === "hit") && !hitFiredRef.current) {
+      hitFiredRef.current = true;
+      onHit?.();
+    }
+  }, [phase, onHit]);
 
   // Auto-dismiss once resolved.
   useEffect(() => {
@@ -172,13 +203,22 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
 
   return (
     <div className="fixed inset-0 z-[100] overflow-hidden">
-      <div className="pointer-events-none absolute -inset-12" style={{ animation: "atkShake .22s linear infinite" }}>
-        <div className="absolute inset-0" style={{ background: success ? "#22D3EE" : "#FF281C", animation: "atkFlash .16s linear infinite" }} />
-        <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 220px 60px ${vig}` }} />
+      <div className="pointer-events-none absolute -inset-12" style={{ animation: success ? undefined : "atkShake .22s linear infinite" }}>
+        {success ? (
+          <div
+            className="absolute inset-0"
+            style={{ background: "radial-gradient(circle at 50% 42%, rgba(34,211,238,.30), rgba(7,14,20,.78) 70%)" }}
+          />
+        ) : (
+          <>
+            <div className="absolute inset-0" style={{ background: "#FF281C", animation: "atkFlash .16s linear infinite" }} />
+            <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 220px 60px ${vig}` }} />
+          </>
+        )}
       </div>
 
       <div className="pointer-events-none absolute inset-0">
-        {floaters.map((f) => (
+        {!success && floaters.map((f) => (
           <span key={f.key} style={f.style}>
             {f.label}
           </span>
@@ -203,12 +243,15 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
                 )}
               </div>
               <div style={{ fontFamily: PIXEL, fontSize: 13, color: "#fff", textShadow: "1px 1px 0 #000", marginBottom: 11 }}>
-                {lv > 0 ? "연속 피격! 더 정확히 패링!" : "흰 마커가 가운데 올 때 패링!"}
+                <span style={{ color: "#67E8F9" }}>바깥 = 반사(유지)</span> · <span style={{ color: "#FDE047" }}>안쪽 = 반사(난이도↑)</span>
               </div>
-              <div className="relative h-[26px] overflow-hidden border-[3px] border-black" style={{ background: "#11141B", boxShadow: "3px 3px 0 rgba(0,0,0,.5)" }}>
-                <div className="absolute inset-y-0" style={{ left: `${50 - goodHalf}%`, width: `${goodHalf * 2}%`, background: "rgba(34,211,238,.18)" }} />
-                <div className="absolute inset-y-0" style={{ left: `${50 - perfectHalf}%`, width: `${perfectHalf * 2}%`, background: "rgba(34,211,238,.5)", boxShadow: "inset 0 0 0 2px #22D3EE" }} />
-                <div className="absolute" style={{ left: `calc(${pos}% - 3px)`, top: -2, bottom: -2, width: 6, background: "#fff", boxShadow: "0 0 8px #fff" }} />
+              <div className="relative h-[28px] overflow-hidden border-[3px] border-black" style={{ background: "#11141B", boxShadow: "3px 3px 0 rgba(0,0,0,.5)" }}>
+                <div
+                  className="absolute inset-y-0"
+                  style={{ left: `${50 - blockHalf}%`, width: `${blockHalf * 2}%`, background: "rgba(34,211,238,.34)", boxShadow: "inset 0 0 0 2px rgba(34,211,238,.85)" }}
+                />
+                <div className="absolute inset-y-0" style={{ left: `${50 - reflectHalf}%`, width: `${reflectHalf * 2}%`, background: "rgba(253,224,71,.6)", boxShadow: "inset 0 0 0 2px #FDE047" }} />
+                <div ref={markerRef} className="absolute" style={{ left: "calc(0% - 3px)", top: -2, bottom: -2, width: 6, background: "#fff", boxShadow: "0 0 8px #fff" }} />
               </div>
               <button
                 type="button"
@@ -223,13 +266,17 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
               <div style={{ marginTop: 9, fontFamily: PIXEL, fontSize: 11, color: "#9AD8E8", animation: "blink 1s steps(1) infinite" }}>SPACE 또는 클릭</div>
             </div>
           </div>
-        ) : success ? (
+        ) : phase === "reflect" ? (
           <div className="text-center select-none" style={{ animation: "slam .5s steps(4) both" }}>
-            <div style={{ fontFamily: ARCADE, fontSize: 50, color: "#67E8F9", textShadow: "5px 5px 0 #000,0 0 22px rgba(34,211,238,.85)" }}>
-              {phase === "perfect" ? "PERFECT PARRY!!" : "PARRY!!"}
-            </div>
-            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 19, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 반격 반사 성공!</div>
-            <div style={{ marginTop: 4, fontFamily: PIXEL, fontSize: 13, color: "#9AD8E8" }}>공격이 시전자에게 되돌아갔습니다</div>
+            <div style={{ fontFamily: ARCADE, fontSize: 50, color: "#FDE047", textShadow: "5px 5px 0 #000,0 0 22px rgba(253,224,71,.85)" }}>REFLECT!!</div>
+            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 19, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 공격을 되돌렸습니다!</div>
+            <div style={{ marginTop: 4, fontFamily: PIXEL, fontSize: 13, color: "#FDE9A0" }}>릴레이 LV.{Math.min(5, lv + 1)} — 상대 차례!</div>
+          </div>
+        ) : phase === "parry" ? (
+          <div className="text-center select-none" style={{ animation: "slam .5s steps(4) both" }}>
+            <div style={{ fontFamily: ARCADE, fontSize: 46, color: "#67E8F9", textShadow: "5px 5px 0 #000,0 0 20px rgba(34,211,238,.8)" }}>PARRY!</div>
+            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 18, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 공격을 되돌렸습니다!</div>
+            <div style={{ marginTop: 4, fontFamily: PIXEL, fontSize: 13, color: "#9AD8E8" }}>난이도 LV.{lv} 유지 — 상대 차례!</div>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3 select-none">

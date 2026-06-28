@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { Landmark, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Landmark, Link2, Pencil, Plus, Trash2, X } from "lucide-react";
 
 import type { ChangeEntry, Item, Member, Tier } from "@tier-list/shared";
+import { fetchOg, type OgCard } from "../../lib/og";
 
 function swatch(name: string): string {
   let h = 0;
@@ -18,6 +19,62 @@ function relTime(ts: number): string {
 }
 
 const W = 264;
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+/** One related link rendered as an OpenGraph card (thumbnail + title + domain). */
+function LinkCard({ url, onRemove }: { url: string; onRemove?: () => void }) {
+  const [og, setOg] = useState<OgCard | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchOg(url).then((d) => alive && setOg(d));
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+  const host = hostOf(url);
+  return (
+    <div className="group/lc relative flex overflow-hidden rounded-[6px] border border-[#2A303C] bg-[#171B22]">
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="flex min-w-0 flex-1 gap-2 transition-colors hover:bg-[#1C212B]"
+      >
+        {og?.image ? (
+          <img src={og.image} alt="" className="size-[52px] shrink-0 object-cover" />
+        ) : (
+          <div className="grid size-[52px] shrink-0 place-items-center bg-[#0E1117] text-[#5A6070]">
+            <Link2 className="size-4" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1 py-1.5 pr-2">
+          <div className="truncate text-[11px] font-bold text-[#E6E9EF]">{og?.title ?? host}</div>
+          {og?.description && (
+            <div className="truncate text-[10px] text-[#8A8F9C]">{og.description}</div>
+          )}
+          <div className="truncate text-[9px] text-[#5A6070]">{og?.siteName ?? host}</div>
+        </div>
+      </a>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title="링크 삭제"
+          className="absolute top-1 right-1 hidden size-5 place-items-center rounded bg-black/60 text-[#C4C8D2] group-hover/lc:grid hover:text-white"
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** Tier labels can be up to 4 chars — shrink the font so they fit one line. */
 function labelFont(label: string): number {
@@ -39,6 +96,8 @@ type TierPopoverProps = {
   onStartVote?: () => void;
   onEdit: () => void;
   onRemove: () => void;
+  /** Persist the item's related-link list (undefined → read-only / no editing). */
+  onSetLinks?: (links: string[]) => void;
   onClose: () => void;
 };
 
@@ -55,9 +114,23 @@ export function TierPopover({
   onStartVote,
   onEdit,
   onRemove,
+  onSetLinks,
   onClose,
 }: TierPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [linkDraft, setLinkDraft] = useState("");
+  const links = item.links ?? [];
+
+  const addLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onSetLinks) return;
+    let url = linkDraft.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    setLinkDraft("");
+    if (links.includes(url)) return;
+    onSetLinks([...links, url]);
+  };
   const [pos, setPos] = useState(() => ({
     left: Math.max(8, Math.min(anchor.left, window.innerWidth - W - 8)),
     top: anchor.bottom + 8,
@@ -173,6 +246,38 @@ export function TierPopover({
               <Trash2 className="size-[13px]" />
             </button>
           </div>
+
+          {onSetLinks && (
+            <div className="border-t border-[#20252F] px-3 py-2">
+              <div className="mb-1.5 text-[10px] font-bold tracking-wide text-[#6A707E]">링크</div>
+              {links.length > 0 && (
+                <div className="mb-1.5 flex flex-col gap-1.5">
+                  {links.map((url) => (
+                    <LinkCard
+                      key={url}
+                      url={url}
+                      onRemove={() => onSetLinks(links.filter((u) => u !== url))}
+                    />
+                  ))}
+                </div>
+              )}
+              <form onSubmit={addLink} className="flex gap-1.5">
+                <input
+                  value={linkDraft}
+                  onChange={(e) => setLinkDraft(e.target.value)}
+                  placeholder="URL 붙여넣기"
+                  className="h-7 min-w-0 flex-1 rounded-[5px] border border-[#2A303C] bg-[#0E1117] px-2 text-[11px] text-white placeholder:text-[#5A6070] focus:border-[#6366F1] focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  title="링크 추가"
+                  className="grid size-7 shrink-0 place-items-center rounded-[5px] bg-[#6366F1] text-white"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+              </form>
+            </div>
+          )}
 
           {recent.length > 0 && (
             <div className="border-t border-[#20252F] px-3 py-2">

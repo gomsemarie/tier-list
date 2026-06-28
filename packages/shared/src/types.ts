@@ -16,6 +16,8 @@ export type Item = {
   addedBy?: string;
   /** Most-recent tier changes (newest last, capped at 10). */
   history?: TierChange[];
+  /** Related links shown as OpenGraph cards in the item popover. */
+  links?: string[];
 };
 
 export type Tier = {

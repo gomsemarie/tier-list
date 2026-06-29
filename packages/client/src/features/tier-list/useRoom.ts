@@ -18,6 +18,9 @@ import type {
   RoomSummary,
   UpdateResult,
   VoteSnapshot,
+  DecisionSnapshot,
+  DecisionSide,
+  DecisionRole,
 } from "@tier-list/shared";
 
 // By default we connect to the *same origin* the page was served from and let
@@ -65,6 +68,11 @@ export type RoomConnection = {
   roomList: RoomSummary[];
   authUser: AuthUser | null;
   activeVote: VoteSnapshot | null;
+  /** In-progress tier decision match (signup → duel → result), or null. */
+  activeDecision: DecisionSnapshot | null;
+  proposeDecision: (itemId: string, tierId: string) => void;
+  joinDecision: (side: DecisionSide, role: DecisionRole) => void;
+  leaveDecision: () => void;
   /** Set briefly when this client is attacked by an admin (drives the hit effect). */
   attack: { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null;
   clearAttack: () => void;
@@ -157,6 +165,7 @@ export function useRoom(): RoomConnection {
   const [roomList, setRoomList] = useState<RoomSummary[]>([]);
   const [authUser, setAuthUser] = useState<AuthUser | null>(loadUser);
   const [activeVote, setActiveVote] = useState<VoteSnapshot | null>(null);
+  const [activeDecision, setActiveDecision] = useState<DecisionSnapshot | null>(null);
   const [attack, setAttack] = useState<
     { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null
   >(null);
@@ -225,6 +234,7 @@ export function useRoom(): RoomConnection {
         joinedConfirmedRef.current = false;
         setRoom(null);
         setActiveVote(null);
+        setActiveDecision(null);
         setError("방이 삭제되었습니다.");
       }
     });
@@ -234,12 +244,16 @@ export function useRoom(): RoomConnection {
         joinedConfirmedRef.current = false;
         setRoom(null);
         setActiveVote(null);
+        setActiveDecision(null);
         setHints([]);
         setError("방에서 내보내졌습니다.");
       }
     });
     socket.on("room:vote", (snap: VoteSnapshot | null) => {
       setActiveVote(snap);
+    });
+    socket.on("room:decision", (snap: DecisionSnapshot | null) => {
+      setActiveDecision(snap);
     });
     socket.on(
       "room:attacked",
@@ -434,6 +448,7 @@ export function useRoom(): RoomConnection {
     socketRef.current?.emit("room:leave");
     setRoom(null);
     setActiveVote(null);
+    setActiveDecision(null);
     setHints([]);
   }, []);
 
@@ -473,6 +488,16 @@ export function useRoom(): RoomConnection {
     socketRef.current?.emit("vote:cast", { tierId });
   }, []);
 
+  const proposeDecision = useCallback((itemId: string, tierId: string) => {
+    socketRef.current?.emit("decision:propose", { itemId, tierId });
+  }, []);
+  const joinDecision = useCallback((side: DecisionSide, role: DecisionRole) => {
+    socketRef.current?.emit("decision:join", { side, role });
+  }, []);
+  const leaveDecision = useCallback(() => {
+    socketRef.current?.emit("decision:leave");
+  }, []);
+
   const moderate = useCallback(
     (action: ModerateActionType, targetUserId?: string, seconds?: number) => {
       socketRef.current?.emit("room:moderate", { action, targetUserId, seconds });
@@ -510,6 +535,10 @@ export function useRoom(): RoomConnection {
     roomList,
     authUser,
     activeVote,
+    activeDecision,
+    proposeDecision,
+    joinDecision,
+    leaveDecision,
     attack,
     clearAttack,
     parryAttack,

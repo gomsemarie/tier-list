@@ -112,7 +112,7 @@ export const FRAMES: Record<string, FrameStyle> = {
 
 /** Catalog of unlockable perks. Codes that grant them live on the server. */
 export const PERKS: Perk[] = [
-  { id: ABILITY_ATTACK, type: "ability", name: "공격 권한", rarity: "epic" },
+  { id: ABILITY_ATTACK, type: "ability", name: "연습 결투 권한", rarity: "epic" },
   ...Object.entries(SC_STYLES)
     .filter(([id]) => id !== "base")
     .map(([id, s]): Perk => ({ id, type: "superchat", name: `${s.name} 슈퍼챗`, rarity: s.rarity })),

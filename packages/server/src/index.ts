@@ -29,6 +29,10 @@ import type {
   RoomSummary,
   UpdateResult,
   VoteSnapshot,
+  DecisionSnapshot,
+  DecisionSide,
+  DecisionRole,
+  DuelParticipant,
 } from "@tier-list/shared";
 import type { Item, Tier, TierListState } from "@tier-list/shared";
 
@@ -90,6 +94,30 @@ type Room = {
   voteOptOut: Set<string>;
   /** Active attack/parry rally per user-pair → the chat message id it updates. */
   rallies: Map<string, string>;
+  /** In-progress tier decision match (ephemeral, one per room). */
+  decision: DecisionState | null;
+  decisionTimer: ReturnType<typeof setTimeout> | null;
+  /** Items pinned to a tier by a won decision match: itemId → { tierId, until }. */
+  tierLocks: Map<string, { tierId: string; until: number }>;
+  /** Re-propose ban after a defender win: itemId → epoch ms. */
+  decisionCooldown: Map<string, number>;
+};
+
+type DecisionState = {
+  id: string;
+  itemId: string;
+  targetTierId: string;
+  proposerId: string;
+  proposerName: string;
+  phase: "signup" | "duel" | "resolved" | "canceled";
+  endsAt: number;
+  durationMs: number;
+  fromTier: string | null;
+  /** userId rosters; a user is in at most one bucket. */
+  pro: { fighters: Set<string>; spectators: Set<string> };
+  con: { fighters: Set<string>; spectators: Set<string> };
+  duel?: { proId: string; conId: string; pk: string };
+  result?: { winner: DecisionSide; outcome: "moved" | "kept"; toTier: string | null; lockUntil?: number };
 };
 
 type VoteState = {
@@ -132,6 +160,12 @@ const attackCooldownPair = new Map<string, number>(); // `${roomId}:${attacker}:
 // Per-person parry difficulty: how many inner-reflects the *opponent* landed on
 // this player in the current rally. Keyed `${roomId}:${pairKey}:${victimId}`.
 const parryLevel = new Map<string, number>();
+
+// 티어 결정전 (decision match) timings.
+const DECISION_SIGNUP_MS = 30_000; // recruit window
+const DECISION_LOCK_MS = 60 * 60 * 1000; // challenger win → 1h tier lock
+const DECISION_CON_COOLDOWN_MS = 60_000; // defender win → 60s re-propose ban
+const DECISION_RESULT_HOLD_MS = 6_000; // result card shown this long before clearing
 
 // --- Password hashing (Node crypto scrypt — no external deps) ----------------
 function hashPassword(password: string): { salt: string; hash: string } {
@@ -264,6 +298,10 @@ for (const persisted of loadAllRooms()) {
     voteTimer: null,
     voteOptOut: new Set(),
     rallies: new Map(),
+    decision: null,
+    decisionTimer: null,
+    tierLocks: new Map(),
+    decisionCooldown: new Map(),
   });
 }
 console.log(`restored ${rooms.size} room(s) from disk`);
@@ -349,6 +387,10 @@ function snapshot(room: Room): RoomSnapshot {
       voteBannedFor: voteBannedUntil && voteBannedUntil > now ? room.voteBanDur.get(m.userId) : undefined,
     };
   });
+  const locks: RoomSnapshot["locks"] = {};
+  for (const [itemId, l] of room.tierLocks) {
+    if (l.until > now) locks[itemId] = { tierId: l.tierId, ...tierMeta(room, l.tierId), until: l.until };
+  }
   return {
     id: room.id,
     title: room.title,
@@ -357,6 +399,7 @@ function snapshot(room: Room): RoomSnapshot {
     messages: room.messages,
     members,
     history: room.history,
+    locks,
   };
 }
 
@@ -552,6 +595,7 @@ function startVote(
   if (room.vote) return "이미 진행 중인 투표가 있어요.";
   const item = room.state.items[itemId];
   if (!item) return "대상을 찾지 못했어요.";
+  if (itemLock(room, itemId)) return "결정전으로 고정된 아이템은 투표할 수 없어요.";
   // Placed or unplaced both allowed; fromTier is null for pool items.
   const fromTier = tierOfItem(room.state, itemId);
   if (room.state.tiers.length < 2) return "투표하려면 티어가 2개 이상 필요해요.";
@@ -691,6 +735,259 @@ function endVote(io: Server, room: Room) {
     scheduleVoteEnd(io, room);
     broadcastVote(io, room);
   }, REVOTE_HOLD_MS);
+}
+
+// --- 티어 결정전 (decision match) -------------------------------------------
+
+/** Resolve a userId to a display participant (name/avatar/frame). */
+function memberInfo(room: Room, userId: string): DuelParticipant {
+  for (const m of room.members.values())
+    if (m.userId === userId)
+      return { userId, name: m.name, avatar: m.avatar || undefined, frame: m.frame || undefined };
+  return { userId, name: "참가자" };
+}
+
+/** Unique account ids taking part (fighters + spectators, both sides). */
+function decisionParticipants(d: DecisionState): Set<string> {
+  return new Set([...d.pro.fighters, ...d.pro.spectators, ...d.con.fighters, ...d.con.spectators]);
+}
+
+/** Members needed for the match to be valid: ⌈unique members / 2⌉. */
+function decisionNeeded(room: Room): number {
+  const ids = new Set<string>();
+  for (const m of room.members.values()) if (m.userId) ids.add(m.userId);
+  return Math.max(1, Math.ceil(ids.size / 2));
+}
+
+/** Active tier lock for an item (expired locks are pruned), or null. */
+function itemLock(room: Room, itemId: string) {
+  const l = room.tierLocks.get(itemId);
+  if (l && l.until > Date.now()) return l;
+  if (l) room.tierLocks.delete(itemId);
+  return null;
+}
+
+/** Remaining re-propose cooldown (epoch ms) after a defender win, or 0. */
+function decisionCooldownUntil(room: Room, itemId: string): number {
+  const until = room.decisionCooldown.get(itemId);
+  if (until && until > Date.now()) return until;
+  if (until) room.decisionCooldown.delete(itemId);
+  return 0;
+}
+
+function decisionRemove(d: DecisionState, userId: string) {
+  d.pro.fighters.delete(userId);
+  d.pro.spectators.delete(userId);
+  d.con.fighters.delete(userId);
+  d.con.spectators.delete(userId);
+}
+
+function buildDecisionSnapshot(room: Room): DecisionSnapshot | null {
+  const d = room.decision;
+  if (!d) return null;
+  const item = room.state.items[d.itemId];
+  const roster = (r: { fighters: Set<string>; spectators: Set<string> }) => ({
+    fighters: [...r.fighters].map((id) => memberInfo(room, id)),
+    spectators: [...r.spectators].map((id) => memberInfo(room, id)),
+  });
+  return {
+    id: d.id,
+    itemId: d.itemId,
+    itemName: item?.name ?? "?",
+    itemImage: item?.imageUrl ?? null,
+    targetTier: { tierId: d.targetTierId, ...tierMeta(room, d.targetTierId) },
+    currentTier: d.fromTier ? tierMeta(room, d.fromTier) : null,
+    proposer: d.proposerName,
+    phase: d.phase,
+    endsAt: d.endsAt,
+    durationMs: d.durationMs,
+    pro: roster(d.pro),
+    con: roster(d.con),
+    participants: decisionParticipants(d).size,
+    needed: decisionNeeded(room),
+    duel: d.duel
+      ? { pro: memberInfo(room, d.duel.proId).name, con: memberInfo(room, d.duel.conId).name }
+      : undefined,
+    result: d.result
+      ? {
+          winner: d.result.winner,
+          outcome: d.result.outcome,
+          toLabel: d.result.toTier ? tierMeta(room, d.result.toTier).label : undefined,
+          toColor: d.result.toTier ? tierMeta(room, d.result.toTier).color : undefined,
+          lockUntil: d.result.lockUntil,
+        }
+      : undefined,
+  };
+}
+
+function broadcastDecision(io: Server, room: Room) {
+  io.to(room.id).emit("room:decision", buildDecisionSnapshot(room));
+}
+
+function clearDecision(room: Room) {
+  if (room.decisionTimer) clearTimeout(room.decisionTimer);
+  room.decisionTimer = null;
+  room.decision = null;
+}
+
+function scheduleDecisionEnd(io: Server, room: Room) {
+  if (room.decisionTimer) clearTimeout(room.decisionTimer);
+  const ms = Math.max(0, (room.decision?.endsAt ?? Date.now()) - Date.now());
+  room.decisionTimer = setTimeout(() => onDecisionSignupEnd(io, room), ms);
+}
+
+/** Open a decision match. Returns an error string, or null on success. */
+function proposeDecision(
+  io: Server,
+  room: Room,
+  itemId: string,
+  targetTierId: string,
+  proposerId: string,
+  proposerName: string,
+): string | null {
+  if (room.decision) return "이미 진행 중인 결정전이 있어요.";
+  const item = room.state.items[itemId];
+  if (!item) return "대상을 찾지 못했어요.";
+  const target = room.state.tiers.find((t) => t.id === targetTierId);
+  if (!target) return "대상 티어를 찾지 못했어요.";
+  if (itemLock(room, itemId)) return "고정된 아이템이에요. 고정이 풀린 뒤 신청하세요.";
+  const cd = decisionCooldownUntil(room, itemId);
+  if (cd) return `잠시 후 다시 신청할 수 있어요. (${Math.ceil((cd - Date.now()) / 1000)}초)`;
+  const from = tierOfItem(room.state, itemId);
+  if (from === targetTierId) return "이미 해당 티어에 있어요.";
+  room.decision = {
+    id: crypto.randomUUID(),
+    itemId,
+    targetTierId,
+    proposerId,
+    proposerName,
+    phase: "signup",
+    endsAt: Date.now() + DECISION_SIGNUP_MS,
+    durationMs: DECISION_SIGNUP_MS,
+    fromTier: from,
+    pro: { fighters: new Set([proposerId]), spectators: new Set() },
+    con: { fighters: new Set(), spectators: new Set() },
+  };
+  scheduleDecisionEnd(io, room);
+  pushMessage(
+    room,
+    message("system", `${proposerName} 님이 '${item.name}' → ${target.label} 티어 결정전을 신청했습니다.`, "action"),
+  );
+  broadcast(io, room);
+  broadcastDecision(io, room);
+  return null;
+}
+
+function joinDecision(io: Server, room: Room, userId: string, side: DecisionSide, role: DecisionRole) {
+  const d = room.decision;
+  if (!d || d.phase !== "signup") return;
+  if (!isRoomMember(room, userId)) return;
+  decisionRemove(d, userId);
+  (role === "fighter" ? d[side].fighters : d[side].spectators).add(userId);
+  broadcastDecision(io, room);
+}
+
+function leaveDecision(io: Server, room: Room, userId: string) {
+  const d = room.decision;
+  if (!d || d.phase !== "signup") return;
+  decisionRemove(d, userId);
+  broadcastDecision(io, room);
+}
+
+/** Signup window closed → validate quorum, then duel or cancel. */
+function onDecisionSignupEnd(io: Server, room: Room) {
+  const d = room.decision;
+  if (!d || d.phase !== "signup") return;
+  const participants = decisionParticipants(d).size;
+  const needed = decisionNeeded(room);
+  const ok = participants >= needed && d.pro.fighters.size >= 1 && d.con.fighters.size >= 1;
+  const item = room.state.items[d.itemId];
+  const itemName = item?.name ?? "대상";
+  if (!ok) {
+    d.phase = "canceled";
+    const why =
+      participants < needed
+        ? `정족수 미달 (${participants}/${needed})`
+        : d.pro.fighters.size < 1
+          ? "찬성 결투자 없음"
+          : "반대 결투자 없음";
+    pushMessage(room, message("system", `'${itemName}' 결정전 무산 — ${why}`, "action"));
+    broadcast(io, room);
+    broadcastDecision(io, room);
+    room.decisionTimer = setTimeout(() => {
+      clearDecision(room);
+      broadcastDecision(io, room);
+    }, DECISION_RESULT_HOLD_MS);
+    return;
+  }
+  d.phase = "duel";
+  startDecisionDuel(io, room);
+}
+
+/** P1: pick one champion per side and kick off a parry rally between them. */
+function startDecisionDuel(io: Server, room: Room) {
+  const d = room.decision;
+  if (!d) return;
+  const proId = [...d.pro.fighters][0];
+  const conId = [...d.con.fighters][0];
+  const pk = pairKey(proId, conId);
+  parryLevel.set(`${room.id}:${pk}:${proId}`, 0);
+  parryLevel.set(`${room.id}:${pk}:${conId}`, 0);
+  d.duel = { proId, conId, pk };
+  const proName = memberInfo(room, proId).name;
+  const conName = memberInfo(room, conId).name;
+  // Challenger (pro) attacks first; defender (con) gets the parry prompt.
+  for (const [sid, m] of room.members) {
+    if (m.userId === conId)
+      io.to(sid).emit("room:attacked", { by: proName, byUserId: proId, parryable: true, level: 0 });
+  }
+  const rallyMsg = message(proName, "", "action");
+  rallyMsg.rally = buildRally(room, pk, 1);
+  pushMessage(room, rallyMsg);
+  room.rallies.set(pk, rallyMsg.id);
+  pushMessage(room, message("system", `⚔️ 결정전 시작 — ${proName}(찬성) vs ${conName}(반대)`, "action"));
+  broadcast(io, room);
+  broadcastDecision(io, room);
+}
+
+/** A duel champion missed (loserId). Winner side decides the item's fate. */
+function resolveDecision(io: Server, room: Room, loserId: string) {
+  const d = room.decision;
+  if (!d || d.phase !== "duel" || !d.duel) return;
+  const winner: DecisionSide = loserId === d.duel.proId ? "con" : "pro";
+  const item = room.state.items[d.itemId];
+  const itemName = item?.name ?? "대상";
+  if (winner === "pro") {
+    const target = d.targetTierId;
+    const list = room.state.placement[target] ?? [];
+    room.state = tierListReducer(room.state, {
+      type: "moveItem",
+      itemId: d.itemId,
+      targetListId: target,
+      targetIndex: list.length,
+      by: "⚔️ 티어 결정전",
+      ts: Date.now(),
+    });
+    const until = Date.now() + DECISION_LOCK_MS;
+    room.tierLocks.set(d.itemId, { tierId: target, until });
+    d.result = { winner, outcome: "moved", toTier: target, lockUntil: until };
+    pushMessage(
+      room,
+      message("system", `🏆 결정전 결과: '${itemName}' → ${tierMeta(room, target).label} 티어 (1시간 고정)`, "action"),
+    );
+  } else {
+    room.decisionCooldown.set(d.itemId, Date.now() + DECISION_CON_COOLDOWN_MS);
+    d.result = { winner, outcome: "kept", toTier: null };
+    pushMessage(room, message("system", `🛡️ 결정전 방어 성공 — '${itemName}' 유지 (1분간 재신청 불가)`, "action"));
+  }
+  d.phase = "resolved";
+  if (room.decisionTimer) clearTimeout(room.decisionTimer);
+  room.decisionTimer = setTimeout(() => {
+    clearDecision(room);
+    broadcastDecision(io, room);
+  }, DECISION_RESULT_HOLD_MS);
+  broadcast(io, room);
+  broadcastDecision(io, room);
 }
 
 function findItem(state: TierListState, name: string): Item | null {
@@ -947,14 +1244,25 @@ io.on("connection", (socket: Socket) => {
       room.members.delete(socket.id);
       pushMessage(room, message("system", `${name} 님이 퇴장했습니다.`, "system"));
       if (room.members.size > 0) {
+        // Decision match: a leaving champion forfeits the duel; a leaving signup
+        // participant just drops out of the roster.
+        const d = room.decision;
+        if (d && authedUser) {
+          if (d.phase === "duel" && d.duel && (authedUser.id === d.duel.proId || authedUser.id === d.duel.conId)) {
+            resolveDecision(io, room, authedUser.id);
+          } else if (d.phase === "signup") {
+            leaveDecision(io, room, authedUser.id);
+          }
+        }
         // A pending vote may now have everyone (still present) voted → end it.
         if (room.vote && room.vote.phase === "voting" && expectedAllVoted(room)) {
           endVote(io, room);
         }
         broadcast(io, room);
       } else {
-        // Last member left — keep the room (persisted), cancel any vote.
+        // Last member left — keep the room (persisted), cancel any vote/decision.
         clearVote(room);
+        clearDecision(room);
         saveRoom(room);
       }
     }
@@ -1298,6 +1606,9 @@ io.on("connection", (socket: Socket) => {
     parryLevel.delete(`${room.id}:${pk}:${authedUser.id}`);
     parryLevel.delete(`${room.id}:${pk}:${aid}`);
     attackCooldownPair.delete(`${room.id}:${aid}:${authedUser.id}`); // let a rematch start at once
+    // If this rally was a decision-match duel, the misser loses it for their side.
+    const d = room.decision;
+    if (d?.phase === "duel" && d.duel?.pk === pk) resolveDecision(io, room, authedUser.id);
     broadcast(io, room);
   });
 
@@ -1331,6 +1642,31 @@ io.on("connection", (socket: Socket) => {
       broadcastVote(io, room);
       if (expectedAllVoted(room)) endVote(io, room);
     }
+  });
+
+  // --- 티어 결정전 ---------------------------------------------------------
+  socket.on("decision:propose", ({ itemId, tierId }: { itemId?: string; tierId?: string }) => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const err = proposeDecision(io, room, String(itemId ?? ""), String(tierId ?? ""), authedUser.id, name);
+    if (err) hint(err);
+  });
+
+  socket.on("decision:join", ({ side, role }: { side?: string; role?: string }) => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const s: DecisionSide = side === "con" ? "con" : "pro";
+    const r: DecisionRole = role === "spectator" ? "spectator" : "fighter";
+    joinDecision(io, room, authedUser.id, s, r);
+  });
+
+  socket.on("decision:leave", () => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    leaveDecision(io, room, authedUser.id);
   });
 
   // Admins promote/demote other accounts. Env admins are locked (cannot be
@@ -1403,6 +1739,10 @@ io.on("connection", (socket: Socket) => {
         voteTimer: null,
         voteOptOut: new Set(),
         rallies: new Map(),
+        decision: null,
+        decisionTimer: null,
+        tierLocks: new Map(),
+        decisionCooldown: new Map(),
       };
       rooms.set(id, room);
       saveRoom(room); // persist immediately so the visibility flag survives
@@ -1460,6 +1800,8 @@ io.on("connection", (socket: Socket) => {
     }
     io.to(id).emit("room:closed", id);
     io.in(id).socketsLeave(id);
+    if (room.voteTimer) clearTimeout(room.voteTimer);
+    clearDecision(room);
     rooms.delete(id);
     deleteRoom(id);
     broadcastRoomList(io);
@@ -1477,12 +1819,12 @@ io.on("connection", (socket: Socket) => {
     if (action === "attack") {
       const canAttack = actorRole !== "member" || authedUser.unlocked.includes("attack");
       if (!canAttack) {
-        hint("공격 권한이 없어요. 계정 관리에서 코드로 잠금 해제하세요.");
+        hint("연습 결투 권한이 없어요. 계정 관리에서 코드로 잠금 해제하세요.");
         return;
       }
       const tid = String(targetUserId ?? "");
       if (!tid || tid === authedUser.id) {
-        hint("자기 자신은 공격할 수 없어요.");
+        hint("자기 자신과는 연습할 수 없어요.");
         return;
       }
       const tgt = [...room.members.values()].find((m) => m.userId === tid);
@@ -1492,7 +1834,7 @@ io.on("connection", (socket: Socket) => {
       const cdKey = `${room.id}:${authedUser.id}:${tid}`;
       const cdLeft = ATTACK_COOLDOWN_MS - (now - (attackCooldownPair.get(cdKey) ?? 0));
       if (cdLeft > 0) {
-        hint(`${tgt?.name ?? "참가자"} 공격 쿨타임 ${Math.ceil(cdLeft / 1000)}초 남았어요.`);
+        hint(`${tgt?.name ?? "참가자"}와의 연습 쿨타임 ${Math.ceil(cdLeft / 1000)}초 남았어요.`);
         return;
       }
       attackCooldownPair.set(cdKey, now);
@@ -1630,6 +1972,16 @@ io.on("connection", (socket: Socket) => {
       hint(`배치가 금지되어 있어요. (${leftLabel(bannedUntil)} 남음)`);
       socket.emit("room:state", snapshot(room)); // revert optimistic change
       return;
+    }
+    // A decision-locked item is pinned to its tier — block moves away from it.
+    if (action.type === "moveItem" || action.type === "removeItem") {
+      const lockedId = action.type === "moveItem" ? action.itemId : action.id;
+      const lock = itemLock(room, lockedId);
+      if (lock && !(action.type === "moveItem" && action.targetListId === lock.tierId)) {
+        hint(`고정된 아이템이에요. (${leftLabel(lock.until)} 남음)`);
+        socket.emit("room:state", snapshot(room)); // revert optimistic change
+        return;
+      }
     }
     // Stamp the actor on add / move actions (the client can't be trusted to).
     const stamped =

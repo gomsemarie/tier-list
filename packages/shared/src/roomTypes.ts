@@ -96,6 +96,9 @@ export type RoomSnapshot = {
   members: Member[];
   /** Recent tier moves (most recent first); optional for back-compat. */
   history?: ChangeEntry[];
+  /** Items pinned to a tier by a won decision match (itemId → lock); drives the
+   *  board's 🔒 highlight and blocks D&D/vote/re-propose until `until`. */
+  locks?: Record<string, { tierId: string; label: string; color: string; until: number }>;
 };
 
 /** Lightweight room info for the lobby list. */
@@ -177,4 +180,49 @@ export type VoteSnapshot = {
   /** "voting" while open; "result" while showing the outcome / re-vote notice. */
   phase: "voting" | "result";
   result?: VoteResult;
+};
+
+// --- 티어 결정전 (skill-based tier decision match) ---------------------------
+
+export type DecisionSide = "pro" | "con";
+export type DecisionRole = "fighter" | "spectator";
+export type DecisionPhase = "signup" | "duel" | "resolved" | "canceled";
+
+export type DuelParticipant = { userId: string; name: string; avatar?: string; frame?: string };
+
+/** One side's roster: 결투(fighters) + 관전(spectators). */
+export type DecisionRoster = { fighters: DuelParticipant[]; spectators: DuelParticipant[] };
+
+/** Live state of a decision match, broadcast to every room member (room:decision). */
+export type DecisionSnapshot = {
+  id: string;
+  itemId: string;
+  itemName: string;
+  itemImage?: string | null;
+  /** Tier the 찬성 side wants to move the item into. */
+  targetTier: VoteOption;
+  /** The item's tier when proposed (null = unplaced). */
+  currentTier: { label: string; color: string } | null;
+  proposer: string;
+  phase: DecisionPhase;
+  /** Signup deadline (signup phase). */
+  endsAt: number;
+  durationMs: number;
+  /** 찬성 (move) / 반대 (keep) rosters. */
+  pro: DecisionRoster;
+  con: DecisionRoster;
+  /** Quorum progress: unique participants vs members needed (⌈room/2⌉). */
+  participants: number;
+  needed: number;
+  /** P1: 1:1 duel — the two champions actually fighting. */
+  duel?: { pro: string; con: string };
+  result?: {
+    winner: DecisionSide;
+    /** "moved" → locked into target tier; "kept" → defender held, re-propose banned briefly. */
+    outcome: "moved" | "kept";
+    toLabel?: string;
+    toColor?: string;
+    /** Lock expiry (moved) — board highlight countdown. */
+    lockUntil?: number;
+  };
 };

@@ -30,7 +30,7 @@ function hueOf(name: string): number {
 
 type Phase = "pending" | "reflect" | "parry" | "miss" | "hit";
 
-/** Full-screen ATTACK!! effect with a parry mini-game (handoff `attackEl`). */
+/** Full-screen DUEL!! effect with a parry mini-game (티어 결정전 연습/실전 공용). */
 export function AttackEffect({ attackKey, by, parryable = false, level = 0, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
   const [phase, setPhase] = useState<Phase>(parryable ? "pending" : "hit");
   const posRef = useRef(0);
@@ -189,13 +189,13 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
     <div className="relative text-center" style={{ animation: "glitch .14s steps(2) infinite" }}>
       <div className="relative inline-block">
         <div className="absolute inset-x-0 top-0" style={{ fontFamily: ARCADE, fontSize: 44, color: "#FF2D6A", transform: "translate(-4px,0)" }}>
-          ATTACK!!
+          DUEL!!
         </div>
         <div className="absolute inset-x-0 top-0" style={{ fontFamily: ARCADE, fontSize: 44, color: "#22D3EE", transform: "translate(4px,0)" }}>
-          ATTACK!!
+          DUEL!!
         </div>
         <div className="relative" style={{ fontFamily: ARCADE, fontSize: 44, color: "#fff", textShadow: "5px 5px 0 #000" }}>
-          ATTACK!!
+          DUEL!!
         </div>
       </div>
     </div>
@@ -233,7 +233,7 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
           <div className="flex flex-col items-center gap-6 select-none">
             {atkTitle}
             <div className="-mt-3" style={{ fontFamily: PIXEL, fontSize: 15, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>
-              관리자 {by}의 공격!
+              {by}님의 연습 결투 신청!
             </div>
             <div className="w-[380px] max-w-[90vw] text-center" style={{ pointerEvents: "auto" }}>
               <div className="flex items-center justify-center gap-2" style={{ marginBottom: 4 }}>
@@ -269,19 +269,19 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
         ) : phase === "reflect" ? (
           <div className="text-center select-none" style={{ animation: "slam .5s steps(4) both" }}>
             <div style={{ fontFamily: ARCADE, fontSize: 50, color: "#FDE047", textShadow: "5px 5px 0 #000,0 0 22px rgba(253,224,71,.85)" }}>REFLECT!!</div>
-            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 19, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 공격을 되돌렸습니다!</div>
+            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 19, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 받아쳤습니다!</div>
             <div style={{ marginTop: 4, fontFamily: PIXEL, fontSize: 13, color: "#FDE9A0" }}>릴레이 LV.{Math.min(5, lv + 1)} — 상대 차례!</div>
           </div>
         ) : phase === "parry" ? (
           <div className="text-center select-none" style={{ animation: "slam .5s steps(4) both" }}>
             <div style={{ fontFamily: ARCADE, fontSize: 46, color: "#67E8F9", textShadow: "5px 5px 0 #000,0 0 20px rgba(34,211,238,.8)" }}>PARRY!</div>
-            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 18, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 공격을 되돌렸습니다!</div>
+            <div style={{ marginTop: 10, fontFamily: PIXEL, fontSize: 18, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 받아쳤습니다!</div>
             <div style={{ marginTop: 4, fontFamily: PIXEL, fontSize: 13, color: "#9AD8E8" }}>난이도 LV.{lv} 유지 — 상대 차례!</div>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3 select-none">
             {atkTitle}
-            <div style={{ fontFamily: PIXEL, fontSize: 18, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>관리자 {by}의 공격 명중!</div>
+            <div style={{ fontFamily: PIXEL, fontSize: 18, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>{by}에게 한 방 먹었습니다!</div>
             {phase === "miss" && (
               <div style={{ fontFamily: ARCADE, fontSize: 16, color: "#FF6B5A", textShadow: "2px 2px 0 #000" }}>GUARD BREAK</div>
             )}

@@ -146,7 +146,7 @@ export function MemberOverlay({
                         : { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A" }
                     }
                   >
-                    <Swords className="size-3.5" /> {cdLeft > 0 ? `${cdLeft}초` : "공격"}
+                    <Swords className="size-3.5" /> {cdLeft > 0 ? `${cdLeft}초` : "연습 결투"}
                   </button>
                 )}
               </div>
@@ -162,7 +162,7 @@ export function MemberOverlay({
                   }
                 >
                   <Zap className="size-3.5" style={{ animation: auto ? "blink 1s steps(1) infinite" : undefined }} />
-                  자동공격 {auto ? "ON" : "OFF"}
+                  자동 연습 {auto ? "ON" : "OFF"}
                 </button>
               )}
               {canGrantAdmin && (
@@ -191,7 +191,7 @@ export function MemberOverlay({
                   : { border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#FF4C3A" }
               }
             >
-              <Swords className="size-3.5" /> {cdLeft > 0 ? `공격 쿨타임 ${cdLeft}초` : "공격"}
+              <Swords className="size-3.5" /> {cdLeft > 0 ? `연습 쿨타임 ${cdLeft}초` : "연습 결투 신청"}
             </button>
           </div>
         ) : (

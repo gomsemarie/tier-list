@@ -24,6 +24,8 @@ type ItemCardProps = {
   highlight?: boolean;
   dim?: boolean;
   voting?: boolean;
+  /** Pinned to this tier by a won decision match — glow ring + 🔒 badge. */
+  locked?: boolean;
   selected?: boolean;
   dndEnabled?: boolean;
 };
@@ -36,6 +38,7 @@ export function ItemCard({
   highlight,
   dim,
   voting,
+  locked,
   selected,
   dndEnabled = true,
 }: ItemCardProps) {
@@ -121,6 +124,14 @@ export function ItemCard({
             <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#FF4C3A_inset]" />
             <span className="absolute top-[3px] left-[3px] rounded-[2px] bg-[#FF4C3A] px-[4px] py-px text-[8px] font-extrabold text-white">
               LIVE
+            </span>
+          </>
+        )}
+        {locked && (
+          <>
+            <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#818CF8_inset,0_0_12px_rgba(129,140,248,.6)]" />
+            <span className="absolute top-[3px] right-[3px] rounded-[2px] bg-[#6366F1] px-[3px] py-px text-[9px] leading-none font-extrabold text-white">
+              🔒
             </span>
           </>
         )}

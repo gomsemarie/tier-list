@@ -34,6 +34,7 @@ import { PresenceAvatar } from "./PresenceAvatar";
 import { ModerationEffect } from "./ModerationEffect";
 import { PromotionEffect } from "./PromotionEffect";
 import { QuickVoteBar } from "./QuickVoteBar";
+import { DecisionCard } from "./DecisionCard";
 import { RoomDialog } from "./RoomDialog";
 import { StartVoteDialog } from "./StartVoteDialog";
 import { TierPopover } from "./TierPopover";
@@ -195,6 +196,8 @@ export function TierListPage() {
       ? new Set([...searchSet].filter((id) => topSet!.has(id)))
       : topSet
     : searchSet;
+
+  const lockedIds = new Set(Object.keys(room.room?.locks ?? {}));
 
   const total = Object.keys(state.items).length;
   const ranked = total - itemsOf(POOL_ID).length;
@@ -463,6 +466,7 @@ export function TierListPage() {
                 items={itemsOf(tier.id)}
                 canDelete={state.tiers.length > 1}
                 matchedIds={matchedIds}
+                lockedIds={lockedIds}
                 selectedItemId={menu?.item.id ?? null}
                 dndEnabled={!sortAZ}
                 onSelectItem={(item, anchor) => setMenu({ item, anchor })}
@@ -563,6 +567,14 @@ export function TierListPage() {
                 }
               : undefined
           }
+          onProposeDecision={
+            room.room
+              ? (tierId) => {
+                  room.proposeDecision(menu.item.id, tierId);
+                  setMenu(null);
+                }
+              : undefined
+          }
           onEdit={() => {
             setForm({ item: menu.item });
             setMenu(null);
@@ -632,6 +644,15 @@ export function TierListPage() {
 
       {room.room && room.voteOptOut && room.activeVote && (
         <QuickVoteBar vote={room.activeVote} myUserId={room.authUser?.id} onCast={room.castVote} />
+      )}
+
+      {room.room && room.activeDecision && (
+        <DecisionCard
+          decision={room.activeDecision}
+          myUserId={room.authUser?.id}
+          onJoin={room.joinDecision}
+          onLeave={room.leaveDecision}
+        />
       )}
 
       {memberView && room.room && room.authUser && (() => {

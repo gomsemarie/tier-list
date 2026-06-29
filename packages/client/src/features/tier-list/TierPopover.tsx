@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Landmark, Link2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Landmark, Link2, Pencil, Plus, Swords, Trash2, X } from "lucide-react";
 
 import type { ChangeEntry, Item, Member, Tier } from "@tier-list/shared";
 import { fetchOg, type OgCard } from "../../lib/og";
@@ -94,6 +94,8 @@ type TierPopoverProps = {
   onMove: (tierId: string) => void;
   onPool: () => void;
   onStartVote?: () => void;
+  /** Open a tier decision match to move the item into `tierId` (room only). */
+  onProposeDecision?: (tierId: string) => void;
   onEdit: () => void;
   onRemove: () => void;
   /** Persist the item's related-link list (undefined → read-only / no editing). */
@@ -112,6 +114,7 @@ export function TierPopover({
   onMove,
   onPool,
   onStartVote,
+  onProposeDecision,
   onEdit,
   onRemove,
   onSetLinks,
@@ -119,6 +122,7 @@ export function TierPopover({
 }: TierPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [linkDraft, setLinkDraft] = useState("");
+  const [duelMode, setDuelMode] = useState(false);
   const links = item.links ?? [];
 
   const addLink = (e: React.FormEvent) => {
@@ -187,19 +191,25 @@ export function TierPopover({
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="px-3 pt-[9px] pb-1.5">
-            <div className="mb-1.5 text-[10px] font-bold tracking-wide text-[#6A707E]">티어로 보내기</div>
+            <div
+              className="mb-1.5 text-[10px] font-bold tracking-wide"
+              style={{ color: duelMode ? "#818CF8" : "#6A707E" }}
+            >
+              {duelMode ? "⚔️ 결정전 — 목표 티어 선택" : "티어로 보내기"}
+            </div>
             <div className="flex gap-[5px]">
               {tiers.map((t) => (
                 <button
                   key={t.id}
                   type="button"
                   title={t.label}
-                  onClick={() => onMove(t.id)}
+                  onClick={() => (duelMode ? onProposeDecision?.(t.id) : onMove(t.id))}
                   className="font-display h-[38px] min-w-0 flex-1 overflow-hidden rounded-[5px] px-1 leading-none whitespace-nowrap text-white"
                   style={{
                     background: t.color,
                     fontSize: labelFont(t.label),
                     border: currentTierId === t.id ? "2px solid #fff" : "none",
+                    boxShadow: duelMode ? "0 0 0 2px #818CF8" : undefined,
                     textShadow: "0 1px 2px rgba(0,0,0,.35)",
                   }}
                 >
@@ -207,6 +217,20 @@ export function TierPopover({
                 </button>
               ))}
             </div>
+            {onProposeDecision && (
+              <button
+                type="button"
+                onClick={() => setDuelMode((v) => !v)}
+                className="mt-1.5 flex h-7 w-full items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-bold transition-colors"
+                style={
+                  duelMode
+                    ? { background: "#6366F1", color: "#fff" }
+                    : { background: "#171B22", color: "#A9AEF5", border: "1px solid rgba(129,140,248,.4)" }
+                }
+              >
+                <Swords className="size-3.5" /> {duelMode ? "결정전 취소" : "티어 결정전 신청"}
+              </button>
+            )}
           </div>
 
           <div className="my-1.5 h-px bg-[#20252F]" />

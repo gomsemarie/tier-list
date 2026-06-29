@@ -100,10 +100,10 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
           {isPro ? "찬성 · 이동" : "반대 · 유지"}
         </div>
         <Roster roster={roster} />
-        {d.phase === "signup" && (
+        {(d.phase === "signup" || d.phase === "balance") && (
           <div className="mt-2 flex gap-1">
             {joinBtn(s, "fighter", "결투", <Swords className="size-3" />)}
-            {joinBtn(s, "spectator", "관전", <Eye className="size-3" />)}
+            {d.phase === "signup" && joinBtn(s, "spectator", "관전", <Eye className="size-3" />)}
           </div>
         )}
       </div>
@@ -120,7 +120,7 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
         <div className="flex items-center gap-1.5 text-[12px] font-extrabold text-white">
           <Swords className="size-3.5 text-[#818CF8]" /> 티어 결정전
         </div>
-        {d.phase === "signup" && (
+        {(d.phase === "signup" || d.phase === "balance") && (
           <span className="font-mono text-[12px] font-bold tabular-nums text-[#FDE047]">{left}s</span>
         )}
         {d.phase === "duel" && <span className="text-[11px] font-bold text-[#FF6B5A]">⚔️ 결투 중</span>}
@@ -143,43 +143,92 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
           </div>
         ) : (
           <>
+            {d.phase === "balance" && (
+              <div className="mb-2 rounded-[6px] border border-[rgba(234,179,8,.35)] bg-[rgba(234,179,8,.08)] px-2 py-1.5 text-center text-[11px] font-bold text-[#FACC15]">
+                ⚖️ 동수를 맞추는 중 — 부족한 쪽에 결투 참가하세요
+              </div>
+            )}
+
             <div className="flex gap-2">
               {side("pro")}
               {side("con")}
             </div>
 
-            {d.phase === "duel" && d.duel && (
-              <div className="mt-2 rounded-[6px] bg-[#0E1117] py-2 text-center text-[12px] text-[#C4C8D2]">
-                <b className="text-[#4ADE80]">{d.duel.pro}</b> <span className="text-[#6A707E]">vs</span>{" "}
-                <b className="text-[#F87171]">{d.duel.con}</b>
-              </div>
-            )}
+            {d.phase === "duel" && d.duel ? (
+              <DuelBoard duel={d.duel} />
+            ) : (
+              <>
+                {/* Quorum */}
+                <div className="mt-2">
+                  <div className="mb-1 flex items-center justify-between text-[10px]">
+                    <span className="text-[#6A707E]">참가 정족수</span>
+                    <span className="font-bold" style={{ color: quorumMet ? "#4ADE80" : "#FDE047" }}>
+                      {d.participants}/{d.needed} {quorumMet ? "✓" : ""}
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-[#20252F]">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${quorumPct}%`, background: quorumMet ? "#22C55E" : "#EAB308" }} />
+                  </div>
+                </div>
 
-            {/* Quorum */}
-            <div className="mt-2">
-              <div className="mb-1 flex items-center justify-between text-[10px]">
-                <span className="text-[#6A707E]">참가 정족수</span>
-                <span className="font-bold" style={{ color: quorumMet ? "#4ADE80" : "#FDE047" }}>
-                  {d.participants}/{d.needed} {quorumMet ? "✓" : ""}
-                </span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-[#20252F]">
-                <div className="h-full rounded-full transition-all" style={{ width: `${quorumPct}%`, background: quorumMet ? "#22C55E" : "#EAB308" }} />
-              </div>
-            </div>
-
-            {d.phase === "signup" && mine && (
-              <button
-                type="button"
-                onClick={onLeave}
-                className="mt-2 flex h-7 w-full items-center justify-center gap-1 rounded-[5px] border border-[#2A303C] bg-[#171B22] text-[11px] font-semibold text-[#8A8F9C]"
-              >
-                <X className="size-3" /> 참가 취소
-              </button>
+                {mine && (
+                  <button
+                    type="button"
+                    onClick={onLeave}
+                    className="mt-2 flex h-7 w-full items-center justify-center gap-1 rounded-[5px] border border-[#2A303C] bg-[#171B22] text-[11px] font-semibold text-[#8A8F9C]"
+                  >
+                    <X className="size-3" /> 참가 취소
+                  </button>
+                )}
+              </>
             )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Live NvN board: survivor tally + active matchups with each fighter's stack. */
+function DuelBoard({ duel }: { duel: NonNullable<DecisionSnapshot["duel"]> }) {
+  const dot = (alive: number, total: number) =>
+    Array.from({ length: total }, (_, i) => (
+      <span
+        key={i}
+        className="inline-block size-2 rounded-full"
+        style={{ background: i < alive ? "currentColor" : "rgba(255,255,255,.14)" }}
+      />
+    ));
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center justify-center gap-3 rounded-[6px] bg-[#0E1117] py-2 text-[13px] font-extrabold">
+        <span className="flex items-center gap-1 text-[#4ADE80]">
+          {duel.proAlive}
+          <span className="flex gap-0.5">{dot(duel.proAlive, duel.proTotal)}</span>
+        </span>
+        <span className="text-[#6A707E]">vs</span>
+        <span className="flex items-center gap-1 text-[#F87171]">
+          <span className="flex gap-0.5">{dot(duel.conAlive, duel.conTotal)}</span>
+          {duel.conAlive}
+        </span>
+      </div>
+      {duel.pairs.length > 0 && (
+        <div className="space-y-1">
+          {duel.pairs.map((p, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-[11px]">
+              <span className="min-w-0 flex-1 truncate text-right text-[#A4F4C0]">
+                {p.pro}
+                {p.proLevel > 0 && <span className="ml-1 text-[#FF6B5A]">LV{p.proLevel}</span>}
+              </span>
+              <Swords className="size-3 shrink-0 text-[#6A707E]" />
+              <span className="min-w-0 flex-1 truncate text-[#F4A4A4]">
+                {p.conLevel > 0 && <span className="mr-1 text-[#FF6B5A]">LV{p.conLevel}</span>}
+                {p.con}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

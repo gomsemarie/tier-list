@@ -109,14 +109,23 @@ type DecisionState = {
   targetTierId: string;
   proposerId: string;
   proposerName: string;
-  phase: "signup" | "duel" | "resolved" | "canceled";
+  phase: "signup" | "balance" | "duel" | "resolved" | "canceled";
   endsAt: number;
   durationMs: number;
   fromTier: string | null;
   /** userId rosters; a user is in at most one bucket. */
   pro: { fighters: Set<string>; spectators: Set<string> };
   con: { fighters: Set<string>; spectators: Set<string> };
-  duel?: { proId: string; conId: string; pk: string };
+  duel?: {
+    /** Active simultaneous matchups. */
+    pairs: { proId: string; conId: string; pk: string }[];
+    proAlive: string[];
+    conAlive: string[];
+    proTotal: number;
+    conTotal: number;
+    /** Pending difficulty (½-stack of a fallen teammate) applied on next pairing. */
+    debt: Map<string, number>;
+  };
   result?: { winner: DecisionSide; outcome: "moved" | "kept"; toTier: string | null; lockUntil?: number };
 };
 
@@ -163,6 +172,7 @@ const parryLevel = new Map<string, number>();
 
 // 티어 결정전 (decision match) timings.
 const DECISION_SIGNUP_MS = 30_000; // recruit window
+const DECISION_BALANCE_MS = 10_000; // equalize-fighters window after signup (configurable)
 const DECISION_LOCK_MS = 60 * 60 * 1000; // challenger win → 1h tier lock
 const DECISION_CON_COOLDOWN_MS = 60_000; // defender win → 60s re-propose ban
 const DECISION_RESULT_HOLD_MS = 6_000; // result card shown this long before clearing
@@ -806,7 +816,18 @@ function buildDecisionSnapshot(room: Room): DecisionSnapshot | null {
     participants: decisionParticipants(d).size,
     needed: decisionNeeded(room),
     duel: d.duel
-      ? { pro: memberInfo(room, d.duel.proId).name, con: memberInfo(room, d.duel.conId).name }
+      ? {
+          pairs: d.duel.pairs.map((p) => ({
+            pro: memberInfo(room, p.proId).name,
+            con: memberInfo(room, p.conId).name,
+            proLevel: parryLevel.get(`${room.id}:${p.pk}:${p.proId}`) ?? 0,
+            conLevel: parryLevel.get(`${room.id}:${p.pk}:${p.conId}`) ?? 0,
+          })),
+          proAlive: d.duel.proAlive.length,
+          conAlive: d.duel.conAlive.length,
+          proTotal: d.duel.proTotal,
+          conTotal: d.duel.conTotal,
+        }
       : undefined,
     result: d.result
       ? {
@@ -880,8 +901,10 @@ function proposeDecision(
 
 function joinDecision(io: Server, room: Room, userId: string, side: DecisionSide, role: DecisionRole) {
   const d = room.decision;
-  if (!d || d.phase !== "signup") return;
+  if (!d || (d.phase !== "signup" && d.phase !== "balance")) return;
   if (!isRoomMember(room, userId)) return;
+  // During the balance window only fighter recruitment to either side is allowed.
+  if (d.phase === "balance" && role !== "fighter") return;
   decisionRemove(d, userId);
   (role === "fighter" ? d[side].fighters : d[side].spectators).add(userId);
   broadcastDecision(io, room);
@@ -889,72 +912,177 @@ function joinDecision(io: Server, room: Room, userId: string, side: DecisionSide
 
 function leaveDecision(io: Server, room: Room, userId: string) {
   const d = room.decision;
-  if (!d || d.phase !== "signup") return;
+  if (!d || (d.phase !== "signup" && d.phase !== "balance")) return;
   decisionRemove(d, userId);
   broadcastDecision(io, room);
 }
 
-/** Signup window closed → validate quorum, then duel or cancel. */
+function decisionCancel(io: Server, room: Room, why: string) {
+  const d = room.decision;
+  if (!d) return;
+  const itemName = room.state.items[d.itemId]?.name ?? "대상";
+  d.phase = "canceled";
+  pushMessage(room, message("system", `'${itemName}' 결정전 무산 — ${why}`, "action"));
+  broadcast(io, room);
+  broadcastDecision(io, room);
+  if (room.decisionTimer) clearTimeout(room.decisionTimer);
+  room.decisionTimer = setTimeout(() => {
+    clearDecision(room);
+    broadcastDecision(io, room);
+  }, DECISION_RESULT_HOLD_MS);
+}
+
+/** Signup window closed → check quorum, then equalize (balance) or duel/cancel. */
 function onDecisionSignupEnd(io: Server, room: Room) {
   const d = room.decision;
   if (!d || d.phase !== "signup") return;
   const participants = decisionParticipants(d).size;
   const needed = decisionNeeded(room);
-  const ok = participants >= needed && d.pro.fighters.size >= 1 && d.con.fighters.size >= 1;
-  const item = room.state.items[d.itemId];
-  const itemName = item?.name ?? "대상";
-  if (!ok) {
-    d.phase = "canceled";
-    const why =
-      participants < needed
-        ? `정족수 미달 (${participants}/${needed})`
-        : d.pro.fighters.size < 1
-          ? "찬성 결투자 없음"
-          : "반대 결투자 없음";
-    pushMessage(room, message("system", `'${itemName}' 결정전 무산 — ${why}`, "action"));
-    broadcast(io, room);
-    broadcastDecision(io, room);
-    room.decisionTimer = setTimeout(() => {
-      clearDecision(room);
-      broadcastDecision(io, room);
-    }, DECISION_RESULT_HOLD_MS);
+  if (participants < needed) {
+    decisionCancel(io, room, `정족수 미달 (${participants}/${needed})`);
     return;
   }
-  d.phase = "duel";
-  startDecisionDuel(io, room);
-}
-
-/** P1: pick one champion per side and kick off a parry rally between them. */
-function startDecisionDuel(io: Server, room: Room) {
-  const d = room.decision;
-  if (!d) return;
-  const proId = [...d.pro.fighters][0];
-  const conId = [...d.con.fighters][0];
-  const pk = pairKey(proId, conId);
-  parryLevel.set(`${room.id}:${pk}:${proId}`, 0);
-  parryLevel.set(`${room.id}:${pk}:${conId}`, 0);
-  d.duel = { proId, conId, pk };
-  const proName = memberInfo(room, proId).name;
-  const conName = memberInfo(room, conId).name;
-  // Challenger (pro) attacks first; defender (con) gets the parry prompt.
-  for (const [sid, m] of room.members) {
-    if (m.userId === conId)
-      io.to(sid).emit("room:attacked", { by: proName, byUserId: proId, parryable: true, level: 0 });
+  // Need ≥1 fighter on at least one side to have any duel to balance toward.
+  if (d.pro.fighters.size === 0 && d.con.fighters.size === 0) {
+    decisionCancel(io, room, "결투자 없음");
+    return;
   }
-  const rallyMsg = message(proName, "", "action");
-  rallyMsg.rally = buildRally(room, pk, 1);
-  pushMessage(room, rallyMsg);
-  room.rallies.set(pk, rallyMsg.id);
-  pushMessage(room, message("system", `⚔️ 결정전 시작 — ${proName}(찬성) vs ${conName}(반대)`, "action"));
+  if (d.pro.fighters.size === d.con.fighters.size) {
+    startDecisionDuel(io, room);
+    return;
+  }
+  // Uneven sides → open a short window to recruit fighters to the short side.
+  d.phase = "balance";
+  d.endsAt = Date.now() + DECISION_BALANCE_MS;
+  d.durationMs = DECISION_BALANCE_MS;
+  if (room.decisionTimer) clearTimeout(room.decisionTimer);
+  room.decisionTimer = setTimeout(() => onDecisionBalanceEnd(io, room), DECISION_BALANCE_MS);
+  pushMessage(room, message("system", `⚖️ 결투 인원 보충 중 — 동수를 맞춰주세요 (${DECISION_BALANCE_MS / 1000}초)`, "action"));
   broadcast(io, room);
   broadcastDecision(io, room);
 }
 
-/** A duel champion missed (loserId). Winner side decides the item's fate. */
-function resolveDecision(io: Server, room: Room, loserId: string) {
+/** Balance window closed → trim the larger side to min, then duel (or cancel). */
+function onDecisionBalanceEnd(io: Server, room: Room) {
   const d = room.decision;
-  if (!d || d.phase !== "duel" || !d.duel) return;
-  const winner: DecisionSide = loserId === d.duel.proId ? "con" : "pro";
+  if (!d || d.phase !== "balance") return;
+  const k = Math.min(d.pro.fighters.size, d.con.fighters.size);
+  if (k < 1) {
+    decisionCancel(io, room, "동수 결투자 모집 실패");
+    return;
+  }
+  // Keep the earliest k fighters per side (선착순); demote the surplus to spectator.
+  for (const side of ["pro", "con"] as const) {
+    const fighters = [...d[side].fighters];
+    for (const extra of fighters.slice(k)) {
+      d[side].fighters.delete(extra);
+      d[side].spectators.add(extra);
+    }
+  }
+  startDecisionDuel(io, room);
+}
+
+/** Kick off K simultaneous matchups (challenger seat vs defender seat by order). */
+function startDecisionDuel(io: Server, room: Room) {
+  const d = room.decision;
+  if (!d) return;
+  d.phase = "duel";
+  const proAlive = [...d.pro.fighters];
+  const conAlive = [...d.con.fighters];
+  d.duel = {
+    pairs: [],
+    proAlive,
+    conAlive,
+    proTotal: proAlive.length,
+    conTotal: conAlive.length,
+    debt: new Map(),
+  };
+  pushMessage(
+    room,
+    message("system", `⚔️ 결정전 시작 — 찬성 ${proAlive.length} vs 반대 ${conAlive.length}`, "action"),
+  );
+  rematchDuel(io, room);
+  broadcast(io, room);
+  broadcastDecision(io, room);
+}
+
+/** Pair up free survivors (≤ min available) and start a parry rally for each. */
+function rematchDuel(io: Server, room: Room) {
+  const d = room.decision;
+  if (!d?.duel) return;
+  const du = d.duel;
+  const engaged = new Set(du.pairs.flatMap((p) => [p.proId, p.conId]));
+  const freePro = du.proAlive.filter((id) => !engaged.has(id));
+  const freeCon = du.conAlive.filter((id) => !engaged.has(id));
+  while (freePro.length && freeCon.length) {
+    const proId = freePro.shift()!;
+    const conId = freeCon.shift()!;
+    const pk = pairKey(proId, conId);
+    parryLevel.set(`${room.id}:${pk}:${proId}`, du.debt.get(proId) ?? 0);
+    parryLevel.set(`${room.id}:${pk}:${conId}`, du.debt.get(conId) ?? 0);
+    du.debt.delete(proId);
+    du.debt.delete(conId);
+    du.pairs.push({ proId, conId, pk });
+    // Challenger (pro) opens; defender (con) gets the parry prompt.
+    const proName = memberInfo(room, proId).name;
+    for (const [sid, m] of room.members) {
+      if (m.userId === conId)
+        io.to(sid).emit("room:attacked", {
+          by: proName,
+          byUserId: proId,
+          parryable: true,
+          level: parryLevel.get(`${room.id}:${pk}:${conId}`) ?? 0,
+        });
+    }
+  }
+}
+
+/** A fighter missed in a duel pair → eliminate them, bleed ½ their stack onto a
+ *  teammate, then re-pair survivors or finish the match. */
+function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
+  const d = room.decision;
+  if (!d?.duel || d.phase !== "duel") return;
+  const du = d.duel;
+  const pairIdx = du.pairs.findIndex((p) => p.pk === pk);
+  if (pairIdx < 0) return;
+  const [pair] = du.pairs.splice(pairIdx, 1);
+  const loserSide: DecisionSide = pair.proId === loserId ? "pro" : "con";
+  const alive = loserSide === "pro" ? du.proAlive : du.conAlive;
+  const i = alive.indexOf(loserId);
+  if (i >= 0) alive.splice(i, 1);
+
+  // Half the difficulty the loser was facing burdens a surviving teammate.
+  const penalty = Math.floor((parryLevel.get(`${room.id}:${pk}:${loserId}`) ?? 0) / 2);
+  parryLevel.delete(`${room.id}:${pk}:${pair.proId}`);
+  parryLevel.delete(`${room.id}:${pk}:${pair.conId}`);
+  if (penalty > 0 && alive.length > 0) {
+    // Pick the living teammate currently under the least pressure.
+    const stackOf = (id: string) => {
+      const inPair = du.pairs.find((p) => p.proId === id || p.conId === id);
+      return inPair ? (parryLevel.get(`${room.id}:${inPair.pk}:${id}`) ?? 0) : (du.debt.get(id) ?? 0);
+    };
+    const target = [...alive].sort((a, b) => stackOf(a) - stackOf(b))[0];
+    const inPair = du.pairs.find((p) => p.proId === target || p.conId === target);
+    if (inPair) {
+      parryLevel.set(`${room.id}:${inPair.pk}:${target}`, stackOf(target) + penalty);
+    } else {
+      du.debt.set(target, (du.debt.get(target) ?? 0) + penalty);
+    }
+  }
+
+  if (du.proAlive.length === 0 || du.conAlive.length === 0) {
+    resolveDecision(io, room, du.conAlive.length === 0 ? "pro" : "con");
+    return;
+  }
+  rematchDuel(io, room);
+  broadcast(io, room);
+  broadcastDecision(io, room);
+}
+
+/** The duel is over — winner side decides the item's fate. */
+function resolveDecision(io: Server, room: Room, winner: DecisionSide) {
+  const d = room.decision;
+  if (!d || d.phase !== "duel") return;
   const item = room.state.items[d.itemId];
   const itemName = item?.name ?? "대상";
   if (winner === "pro") {
@@ -988,6 +1116,37 @@ function resolveDecision(io: Server, room: Room, loserId: string) {
   }, DECISION_RESULT_HOLD_MS);
   broadcast(io, room);
   broadcastDecision(io, room);
+}
+
+/** Is `pk` an active matchup in the current decision duel? */
+function decisionDuelHasPair(room: Room, pk: string): boolean {
+  return !!room.decision?.duel?.pairs.some((p) => p.pk === pk);
+}
+
+/** A fighter left mid-duel: an engaged one forfeits their pair; a benched
+ *  survivor just drops out. Either may end the match. */
+function duelForfeit(io: Server, room: Room, userId: string) {
+  const d = room.decision;
+  if (!d?.duel || d.phase !== "duel") return;
+  const du = d.duel;
+  const inPro = du.proAlive.includes(userId);
+  const inCon = du.conAlive.includes(userId);
+  if (!inPro && !inCon) return;
+  const pair = du.pairs.find((p) => p.proId === userId || p.conId === userId);
+  if (pair) {
+    onDuelHit(io, room, userId, pair.pk);
+    return;
+  }
+  const alive = inPro ? du.proAlive : du.conAlive;
+  const i = alive.indexOf(userId);
+  if (i >= 0) alive.splice(i, 1);
+  if (du.proAlive.length === 0 || du.conAlive.length === 0) {
+    resolveDecision(io, room, du.conAlive.length === 0 ? "pro" : "con");
+  } else {
+    rematchDuel(io, room);
+    broadcast(io, room);
+    broadcastDecision(io, room);
+  }
 }
 
 function findItem(state: TierListState, name: string): Item | null {
@@ -1230,6 +1389,7 @@ io.on("connection", (socket: Socket) => {
     }
     broadcast(io, room);
     if (room.vote) broadcastVote(io, room); // surface an in-progress vote to the joiner
+    if (room.decision) broadcastDecision(io, room); // …and any decision match
   }
 
   function leave() {
@@ -1248,11 +1408,8 @@ io.on("connection", (socket: Socket) => {
         // participant just drops out of the roster.
         const d = room.decision;
         if (d && authedUser) {
-          if (d.phase === "duel" && d.duel && (authedUser.id === d.duel.proId || authedUser.id === d.duel.conId)) {
-            resolveDecision(io, room, authedUser.id);
-          } else if (d.phase === "signup") {
-            leaveDecision(io, room, authedUser.id);
-          }
+          if (d.phase === "duel") duelForfeit(io, room, authedUser.id);
+          else if (d.phase === "signup" || d.phase === "balance") leaveDecision(io, room, authedUser.id);
         }
         // A pending vote may now have everyone (still present) voted → end it.
         if (room.vote && room.vote.phase === "voting" && expectedAllVoted(room)) {
@@ -1574,6 +1731,12 @@ io.on("connection", (socket: Socket) => {
           level: nextLevel,
         });
     }
+    // Decision duels show progress in the DecisionCard, not a chat rally card.
+    if (decisionDuelHasPair(room, pk)) {
+      broadcastDecision(io, room);
+      broadcast(io, room);
+      return;
+    }
     // Update the rally card (count++ , new attacker = the parrier) — no new line.
     const mid = room.rallies.get(pk);
     const existing = mid ? room.messages.find((m) => m.id === mid) : undefined;
@@ -1595,8 +1758,13 @@ io.on("connection", (socket: Socket) => {
     if (!room) return;
     const aid = String(attackerId ?? "");
     if (!aid) return;
-    const winner = [...room.members.values()].find((m) => m.userId === aid);
     const pk = pairKey(authedUser.id, aid);
+    // Decision duel: the misser is eliminated; the engine handles transfer/rematch.
+    if (decisionDuelHasPair(room, pk)) {
+      onDuelHit(io, room, authedUser.id, pk);
+      return;
+    }
+    const winner = [...room.members.values()].find((m) => m.userId === aid);
     const mid = room.rallies.get(pk);
     const existing = mid ? room.messages.find((m) => m.id === mid) : undefined;
     if (existing?.rally && !existing.rally.ended) {
@@ -1606,9 +1774,6 @@ io.on("connection", (socket: Socket) => {
     parryLevel.delete(`${room.id}:${pk}:${authedUser.id}`);
     parryLevel.delete(`${room.id}:${pk}:${aid}`);
     attackCooldownPair.delete(`${room.id}:${aid}:${authedUser.id}`); // let a rematch start at once
-    // If this rally was a decision-match duel, the misser loses it for their side.
-    const d = room.decision;
-    if (d?.phase === "duel" && d.duel?.pk === pk) resolveDecision(io, room, authedUser.id);
     broadcast(io, room);
   });
 

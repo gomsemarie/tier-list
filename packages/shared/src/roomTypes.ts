@@ -186,7 +186,8 @@ export type VoteSnapshot = {
 
 export type DecisionSide = "pro" | "con";
 export type DecisionRole = "fighter" | "spectator";
-export type DecisionPhase = "signup" | "duel" | "resolved" | "canceled";
+/** signup → (balance: equalize fighters) → duel → resolved | canceled. */
+export type DecisionPhase = "signup" | "balance" | "duel" | "resolved" | "canceled";
 
 export type DuelParticipant = { userId: string; name: string; avatar?: string; frame?: string };
 
@@ -214,8 +215,14 @@ export type DecisionSnapshot = {
   /** Quorum progress: unique participants vs members needed (⌈room/2⌉). */
   participants: number;
   needed: number;
-  /** P1: 1:1 duel — the two champions actually fighting. */
-  duel?: { pro: string; con: string };
+  /** Live NvN duel: simultaneous matchups + per-side survivor counts. */
+  duel?: {
+    pairs: { pro: string; con: string; proLevel: number; conLevel: number }[];
+    proAlive: number;
+    conAlive: number;
+    proTotal: number;
+    conTotal: number;
+  };
   result?: {
     winner: DecisionSide;
     /** "moved" → locked into target tier; "kept" → defender held, re-propose banned briefly. */

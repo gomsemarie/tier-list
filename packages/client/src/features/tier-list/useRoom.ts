@@ -73,6 +73,10 @@ export type RoomConnection = {
   proposeDecision: (itemId: string, tierId: string) => void;
   joinDecision: (side: DecisionSide, role: DecisionRole) => void;
   leaveDecision: () => void;
+  /** Owner/admin pins a placed item to its tier for `seconds`. */
+  lockTier: (itemId: string, seconds: number) => void;
+  /** Owner/admin lifts a tier lock early. */
+  unlockTier: (itemId: string) => void;
   /** Set briefly when this client is attacked by an admin (drives the hit effect). */
   attack: { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null;
   clearAttack: () => void;
@@ -98,7 +102,7 @@ export type RoomConnection = {
   updateProfile: (patch: ProfileUpdate) => Promise<UpdateResult>;
   fetchUser: (id: string) => Promise<PublicUser | null>;
   redeemCode: (code: string) => Promise<RedeemResult>;
-  equipPerk: (patch: { frame?: string; scStyle?: string }) => Promise<UpdateResult>;
+  equipPerk: (patch: { frame?: string; scStyle?: string; specBuff?: string }) => Promise<UpdateResult>;
   fetchCodes: () => Promise<CodeInfo[]>;
   issueCode: (perks: string[]) => Promise<IssueCodeResult>;
   createRoom: (title: string, isPublic?: boolean, image?: string) => void;
@@ -386,7 +390,7 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const equipPerk = useCallback(
-    async (patch: { frame?: string; scStyle?: string }) => {
+    async (patch: { frame?: string; scStyle?: string; specBuff?: string }) => {
       const res = await emitAck<UpdateResult>(
         socketRef.current,
         "perk:equip",
@@ -497,6 +501,12 @@ export function useRoom(): RoomConnection {
   const leaveDecision = useCallback(() => {
     socketRef.current?.emit("decision:leave");
   }, []);
+  const lockTier = useCallback((itemId: string, seconds: number) => {
+    socketRef.current?.emit("tier:lock", { itemId, seconds });
+  }, []);
+  const unlockTier = useCallback((itemId: string) => {
+    socketRef.current?.emit("decision:unlock", { itemId });
+  }, []);
 
   const moderate = useCallback(
     (action: ModerateActionType, targetUserId?: string, seconds?: number) => {
@@ -539,6 +549,8 @@ export function useRoom(): RoomConnection {
     proposeDecision,
     joinDecision,
     leaveDecision,
+    lockTier,
+    unlockTier,
     attack,
     clearAttack,
     parryAttack,

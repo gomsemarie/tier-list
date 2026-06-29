@@ -96,9 +96,12 @@ export type RoomSnapshot = {
   members: Member[];
   /** Recent tier moves (most recent first); optional for back-compat. */
   history?: ChangeEntry[];
-  /** Items pinned to a tier by a won decision match (itemId → lock); drives the
-   *  board's 🔒 highlight and blocks D&D/vote/re-propose until `until`. */
-  locks?: Record<string, { tierId: string; label: string; color: string; until: number }>;
+  /** Items pinned to a tier by a won decision match or a vote (itemId → lock);
+   *  drives the board's 🔒 highlight and blocks D&D/vote/re-propose until `until`. */
+  locks?: Record<
+    string,
+    { tierId: string; label: string; color: string; until: number; reason: "decision" | "vote" | "admin" }
+  >;
 };
 
 /** Lightweight room info for the lobby list. */
@@ -194,6 +197,17 @@ export type DuelParticipant = { userId: string; name: string; avatar?: string; f
 /** One side's roster: 결투(fighters) + 관전(spectators). */
 export type DecisionRoster = { fighters: DuelParticipant[]; spectators: DuelParticipant[] };
 
+/** Pooled spectator buffs for one side (from spectators' equipped specBuff). */
+export type DecisionBuffs = {
+  /** 방벽: difficulty-up absorb charges granted / remaining. */
+  bulwark: number;
+  bulwarkLeft: number;
+  /** 응원: own-fighter starting-difficulty reduction. */
+  vigor: number;
+  /** 각성: opposing-fighter starting-difficulty increase. */
+  surge: number;
+};
+
 /** Live state of a decision match, broadcast to every room member (room:decision). */
 export type DecisionSnapshot = {
   id: string;
@@ -215,9 +229,11 @@ export type DecisionSnapshot = {
   /** Quorum progress: unique participants vs members needed (⌈room/2⌉). */
   participants: number;
   needed: number;
+  /** Pooled spectator buffs per side (preview during signup, live during duel). */
+  buffs: { pro: DecisionBuffs; con: DecisionBuffs };
   /** Live NvN duel: simultaneous matchups + per-side survivor counts. */
   duel?: {
-    pairs: { pro: string; con: string; proLevel: number; conLevel: number }[];
+    pairs: { pro: DuelParticipant; con: DuelParticipant; proLevel: number; conLevel: number }[];
     proAlive: number;
     conAlive: number;
     proTotal: number;

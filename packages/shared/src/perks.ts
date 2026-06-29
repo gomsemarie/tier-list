@@ -2,6 +2,20 @@ export type PerkType = "superchat" | "frame" | "ability";
 
 /** Special ability perk ids (not cosmetic). */
 export const ABILITY_ATTACK = "attack";
+
+/**
+ * Spectator buff a player contributes to their team during a 티어 결정전.
+ * A free profile setting (not an unlockable), default "" (none). Team-pooled.
+ */
+export type SpecBuffId = "" | "bulwark" | "vigor" | "surge";
+export const SPEC_BUFFS: { id: Exclude<SpecBuffId, "">; name: string; desc: string }[] = [
+  { id: "bulwark", name: "방벽", desc: "관전 1명당 아군 난이도 상승 흡수 +2회" },
+  { id: "vigor", name: "응원", desc: "관전 1명당 아군 시작 난이도 -1, 전가 페널티 완화" },
+  { id: "surge", name: "각성", desc: "관전 1명당 상대 시작 난이도 +1" },
+];
+export function isSpecBuff(id: string): id is Exclude<SpecBuffId, ""> {
+  return SPEC_BUFFS.some((b) => b.id === id);
+}
 export type Rarity = "common" | "rare" | "epic" | "legendary";
 
 export const RARITY_META: Record<

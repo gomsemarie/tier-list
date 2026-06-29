@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Lock } from "lucide-react";
 import { draggable, dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
@@ -130,8 +131,8 @@ export function ItemCard({
         {locked && (
           <>
             <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#818CF8_inset,0_0_12px_rgba(129,140,248,.6)]" />
-            <span className="absolute top-[3px] right-[3px] rounded-[2px] bg-[#6366F1] px-[3px] py-px text-[9px] leading-none font-extrabold text-white">
-              🔒
+            <span className="absolute top-[3px] right-[3px] grid size-[15px] place-items-center rounded-[3px] bg-[#6366F1] text-white">
+              <Lock className="size-2.5" strokeWidth={2.5} />
             </span>
           </>
         )}

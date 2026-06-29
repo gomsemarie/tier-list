@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Landmark, Link2, Pencil, Plus, Swords, Trash2, X } from "lucide-react";
+import { Landmark, Link2, Lock, Pencil, Plus, Swords, Trash2, Unlock, X } from "lucide-react";
 
 import type { ChangeEntry, Item, Member, Tier } from "@tier-list/shared";
 import { fetchOg, type OgCard } from "../../lib/og";
@@ -19,6 +19,14 @@ function relTime(ts: number): string {
 }
 
 const W = 264;
+
+const LOCK_DURATIONS = [
+  { label: "1분", s: 60 },
+  { label: "10분", s: 600 },
+  { label: "1시간", s: 3600 },
+  { label: "6시간", s: 21600 },
+  { label: "24시간", s: 86400 },
+];
 
 function hostOf(url: string): string {
   try {
@@ -96,6 +104,12 @@ type TierPopoverProps = {
   onStartVote?: () => void;
   /** Open a tier decision match to move the item into `tierId` (room only). */
   onProposeDecision?: (tierId: string) => void;
+  /** Active tier lock on this item — shows a 🔒 banner. */
+  lock?: { tierLabel: string; until: number; reason: "decision" | "vote" | "admin" };
+  /** Owner/admin: pin the item for `seconds` (top-right lock button). */
+  onLock?: (seconds: number) => void;
+  /** Owner/admin: lift the lock early (shown only when `lock` is present). */
+  onUnlock?: () => void;
   onEdit: () => void;
   onRemove: () => void;
   /** Persist the item's related-link list (undefined → read-only / no editing). */
@@ -115,6 +129,9 @@ export function TierPopover({
   onPool,
   onStartVote,
   onProposeDecision,
+  lock,
+  onLock,
+  onUnlock,
   onEdit,
   onRemove,
   onSetLinks,
@@ -123,6 +140,7 @@ export function TierPopover({
   const ref = useRef<HTMLDivElement>(null);
   const [linkDraft, setLinkDraft] = useState("");
   const [duelMode, setDuelMode] = useState(false);
+  const [lockMenu, setLockMenu] = useState(false);
   const links = item.links ?? [];
 
   const addLink = (e: React.FormEvent) => {
@@ -168,6 +186,37 @@ export function TierPopover({
           animation: "popIn .16s ease both",
         }}
       >
+        {onLock && (
+          <div className="absolute top-2 right-2 z-[53]">
+            <button
+              type="button"
+              onClick={() => setLockMenu((v) => !v)}
+              title="아이템 고정"
+              className="grid size-8 place-items-center rounded-[7px] bg-black/55 text-white hover:bg-black/75"
+            >
+              <Lock className="size-4" />
+            </button>
+            {lockMenu && (
+              <div className="absolute right-0 mt-1 w-[122px] overflow-hidden rounded-[8px] border border-[#2A303C] bg-[#13161D] py-1 shadow-[0_14px_36px_rgba(0,0,0,.6)]">
+                <div className="px-3 pb-1 text-[9px] font-bold tracking-wide text-[#6A707E]">고정 시간 선택</div>
+                {LOCK_DURATIONS.map((d) => (
+                  <button
+                    key={d.s}
+                    type="button"
+                    onClick={() => {
+                      onLock(d.s);
+                      setLockMenu(false);
+                    }}
+                    className="block w-full px-3 py-1.5 text-left text-[12px] font-semibold text-[#C4C8D2] hover:bg-[#1C212B]"
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Large preview */}
         <div className="relative h-[132px] w-full shrink-0 overflow-hidden bg-[#0E1117]">
           {item.imageUrl ? (
@@ -190,21 +239,44 @@ export function TierPopover({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {lock && (
+            <div className="mx-3 mt-2.5 flex items-center gap-2 rounded-[6px] border border-[rgba(129,140,248,.4)] bg-[rgba(99,102,241,.1)] px-2.5 py-2">
+              <Lock className="size-3.5 shrink-0 text-[#818CF8]" />
+              <span className="min-w-0 flex-1 text-[11px] font-semibold text-[#C7CBF5]">
+                {lock.reason === "vote" ? "투표로" : lock.reason === "admin" ? "관리자가" : "결정전으로"} <b className="text-white">{lock.tierLabel}</b> 티어 고정 · 약 {Math.max(1, Math.ceil((lock.until - Date.now()) / 60000))}분
+              </span>
+              {onUnlock && (
+                <button
+                  type="button"
+                  onClick={onUnlock}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-[5px] bg-[#6366F1] px-2 text-[11px] font-bold text-white"
+                >
+                  <Unlock className="size-3" /> 해제
+                </button>
+              )}
+            </div>
+          )}
           <div className="px-3 pt-[9px] pb-1.5">
             <div
-              className="mb-1.5 text-[10px] font-bold tracking-wide"
+              className="mb-1.5 flex items-center gap-1 text-[10px] font-bold tracking-wide"
               style={{ color: duelMode ? "#818CF8" : "#6A707E" }}
             >
-              {duelMode ? "⚔️ 결정전 — 목표 티어 선택" : "티어로 보내기"}
+              {duelMode ? (
+                <>
+                  <Swords className="size-3" /> 결정전 — 목표 티어 선택
+                </>
+              ) : (
+                "티어로 보내기"
+              )}
             </div>
-            <div className="flex gap-[5px]">
+            <div className="flex flex-wrap gap-[5px]">
               {tiers.map((t) => (
                 <button
                   key={t.id}
                   type="button"
                   title={t.label}
                   onClick={() => (duelMode ? onProposeDecision?.(t.id) : onMove(t.id))}
-                  className="font-display h-[38px] min-w-0 flex-1 overflow-hidden rounded-[5px] px-1 leading-none whitespace-nowrap text-white"
+                  className="font-display grid h-[38px] min-w-[36px] flex-1 place-items-center rounded-[5px] px-2 leading-[1.25] whitespace-nowrap text-white"
                   style={{
                     background: t.color,
                     fontSize: labelFont(t.label),

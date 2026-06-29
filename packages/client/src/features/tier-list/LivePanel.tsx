@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Eraser, History, MessagesSquare, Send, SlashSquare, Sparkles, Swords } from "lucide-react";
+import { ChevronRight, Eraser, History, MessagesSquare, Send, SlashSquare, Sparkles, Swords, Trophy } from "lucide-react";
 
 import { COMMANDS, findCommand, SC_STYLES } from "@tier-list/shared";
-import type { ChangeEntry, ChatMessage, CommandSpec, Member, VoteSnapshot } from "@tier-list/shared";
+import type {
+  ChangeEntry,
+  ChatMessage,
+  CommandSpec,
+  DecisionRole,
+  DecisionSide,
+  DecisionSnapshot,
+  Member,
+  VoteSnapshot,
+} from "@tier-list/shared";
 import { Avatar } from "./Avatar";
 import { PanelVoteCard } from "./PanelVoteCard";
+import { DecisionCard } from "./DecisionCard";
 
 type LivePanelProps = {
   members: Member[];
@@ -12,6 +22,11 @@ type LivePanelProps = {
   history: ChangeEntry[];
   activeVote: VoteSnapshot | null;
   voteOptOut: boolean;
+  /** In-progress decision match, rendered in-panel (null = none). */
+  activeDecision: DecisionSnapshot | null;
+  myUserId?: string;
+  onDecisionJoin: (side: DecisionSide, role: DecisionRole) => void;
+  onDecisionLeave: () => void;
   canSuper: boolean;
   canModerate: boolean;
   onCast: (tierId: string) => void;
@@ -47,6 +62,10 @@ export function LivePanel({
   history,
   activeVote,
   voteOptOut,
+  activeDecision,
+  myUserId,
+  onDecisionJoin,
+  onDecisionLeave,
   canSuper,
   canModerate,
   onCast,
@@ -146,7 +165,18 @@ export function LivePanel({
         </TabButton>
       </div>
 
-      {activeVote && !voteOptOut && <PanelVoteCard vote={activeVote} onCast={onCast} />}
+      {activeVote && <PanelVoteCard vote={activeVote} onCast={onCast} canVote={!voteOptOut} />}
+
+      {activeDecision && (
+        <div className="mx-3 mt-3">
+          <DecisionCard
+            decision={activeDecision}
+            myUserId={myUserId}
+            onJoin={onDecisionJoin}
+            onLeave={onDecisionLeave}
+          />
+        </div>
+      )}
 
       {tab === "history" ? (
         <div className="flex flex-1 flex-col overflow-y-auto px-3 py-2">
@@ -197,14 +227,17 @@ export function LivePanel({
             {messages.map((m) => {
               if (m.rally) {
                 const r = m.rally;
-                const gap = Math.abs(r.aLevel - r.bLevel);
+                // aLevel/bLevel = difficulty each side has *taken*; the pressure a
+                // side *dealt* is the opponent's level. Show pressure dealt (higher
+                // = winning) and split the bar proportionally to it.
+                const aDealt = r.bLevel;
+                const bDealt = r.aLevel;
+                const totalDealt = aDealt + bDealt;
+                const gap = Math.abs(aDealt - bDealt);
                 const tie = !r.ended && gap === 0;
-                // Lower level = winning (opponent more likely to crack next).
-                const aWin = r.ended ? r.winner === r.a : r.aLevel < r.bLevel;
-                const bWin = r.ended ? r.winner === r.b : r.bLevel < r.aLevel;
-                // Tug-of-war boundary: leans hard even on a 1-level gap (1−0.6^gap).
-                const pull = Math.sign(r.bLevel - r.aLevel) * (1 - Math.pow(0.6, gap));
-                const aShare = r.ended ? (aWin ? 0.96 : 0.04) : (1 + pull) / 2;
+                const aWin = r.ended ? r.winner === r.a : aDealt > bDealt;
+                const bWin = r.ended ? r.winner === r.b : bDealt > aDealt;
+                const aShare = totalDealt > 0 ? aDealt / totalDealt : 0.5;
                 const col = (win: boolean) => (tie ? "#7480A0" : win ? "#5BD3A0" : "#FF4C3A");
                 const lead = aWin ? r.a : r.b;
                 const strength = gap >= 4 ? "압도" : gap >= 2 ? "우세" : "근소 우세";
@@ -230,10 +263,10 @@ export function LivePanel({
                     </div>
                     <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-bold">
                       <span className="min-w-0 truncate" style={{ color: col(aWin) }}>
-                        {r.a} <span className="font-arcade text-[9px]">LV.{r.aLevel}</span>
+                        {r.a} <span className="font-arcade text-[9px]">{aDealt}타</span>
                       </span>
                       <span className="min-w-0 truncate text-right" style={{ color: col(bWin) }}>
-                        <span className="font-arcade text-[9px]">LV.{r.bLevel}</span> {r.b}
+                        <span className="font-arcade text-[9px]">{bDealt}타</span> {r.b}
                       </span>
                     </div>
                     <div className="relative flex h-3 overflow-hidden rounded-[2px] border-2 border-black">
@@ -245,10 +278,18 @@ export function LivePanel({
                       />
                     </div>
                     <div
-                      className="font-pixel mt-1 text-center text-[9px] font-bold"
+                      className="font-pixel mt-1 flex items-center justify-center gap-1 text-center text-[9px] font-bold"
                       style={{ color: r.ended ? "#FDE047" : tie ? "#9AD8E8" : "#fff" }}
                     >
-                      {r.ended ? `🏆 ${r.winner} 승리!` : tie ? "접전!" : `${lead} ${strength}`}
+                      {r.ended ? (
+                        <>
+                          <Trophy className="size-3" /> {r.winner} 승리!
+                        </>
+                      ) : tie ? (
+                        "접전!"
+                      ) : (
+                        `${lead} ${strength}`
+                      )}
                     </div>
                   </div>
                 );

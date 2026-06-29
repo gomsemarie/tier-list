@@ -96,7 +96,7 @@ export function ModerationEffect({
         </span>
         <div className="min-w-0">
           <p className="text-[11px] font-bold tracking-wider uppercase opacity-90">
-            🛡️ {by} 님의 제재
+            {by} 님의 제재
           </p>
           <p className="text-lg leading-tight font-black">
             {targetName} · {m.label}{" "}

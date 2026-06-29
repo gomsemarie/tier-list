@@ -131,6 +131,7 @@ db.exec(`
     unlocked   TEXT NOT NULL DEFAULT '[]',
     frame      TEXT NOT NULL DEFAULT '',
     sc_style   TEXT NOT NULL DEFAULT '',
+    spec_buff  TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL
   )
 `);
@@ -149,6 +150,8 @@ if (userCols.size > 0 && !userCols.has("frame"))
   db.exec("ALTER TABLE users ADD COLUMN frame TEXT NOT NULL DEFAULT ''");
 if (userCols.size > 0 && !userCols.has("sc_style"))
   db.exec("ALTER TABLE users ADD COLUMN sc_style TEXT NOT NULL DEFAULT ''");
+if (userCols.size > 0 && !userCols.has("spec_buff"))
+  db.exec("ALTER TABLE users ADD COLUMN spec_buff TEXT NOT NULL DEFAULT ''");
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
@@ -168,17 +171,18 @@ export type UserRow = {
   unlocked: string;
   frame: string;
   sc_style: string;
+  spec_buff: string;
   created_at: number;
 };
 
 export function createUser(
-  row: Omit<UserRow, "unlocked" | "frame" | "sc_style"> &
-    Partial<Pick<UserRow, "unlocked" | "frame" | "sc_style">>,
+  row: Omit<UserRow, "unlocked" | "frame" | "sc_style" | "spec_buff"> &
+    Partial<Pick<UserRow, "unlocked" | "frame" | "sc_style" | "spec_buff">>,
 ): void {
   db.prepare(
-    `INSERT INTO users (id, username, nickname, avatar, salt, hash, is_admin, unlocked, frame, sc_style, created_at)
-     VALUES (@id, @username, @nickname, @avatar, @salt, @hash, @is_admin, @unlocked, @frame, @sc_style, @created_at)`,
-  ).run({ unlocked: "[]", frame: "", sc_style: "", ...row });
+    `INSERT INTO users (id, username, nickname, avatar, salt, hash, is_admin, unlocked, frame, sc_style, spec_buff, created_at)
+     VALUES (@id, @username, @nickname, @avatar, @salt, @hash, @is_admin, @unlocked, @frame, @sc_style, @spec_buff, @created_at)`,
+  ).run({ unlocked: "[]", frame: "", sc_style: "", spec_buff: "", ...row });
 }
 
 /** Look up by the case-insensitive login id. */
@@ -203,7 +207,7 @@ export function updateUser(
   patch: Partial<
     Pick<
       UserRow,
-      "nickname" | "avatar" | "salt" | "hash" | "is_admin" | "unlocked" | "frame" | "sc_style"
+      "nickname" | "avatar" | "salt" | "hash" | "is_admin" | "unlocked" | "frame" | "sc_style" | "spec_buff"
     >
   >,
 ): void {

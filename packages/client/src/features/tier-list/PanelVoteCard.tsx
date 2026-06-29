@@ -12,10 +12,12 @@ function swatch(name: string): string {
 type PanelVoteCardProps = {
   vote: VoteSnapshot;
   onCast: (tierId: string) => void;
+  /** When false (투표 미참여), the tally is read-only — no casting. */
+  canVote?: boolean;
 };
 
-/** Retro vote card pinned in the live panel (participating mode). */
-export function PanelVoteCard({ vote, onCast }: PanelVoteCardProps) {
+/** Retro vote card pinned in the live panel. Read-only when `canVote` is false. */
+export function PanelVoteCard({ vote, onCast, canVote = true }: PanelVoteCardProps) {
   const [now, setNow] = useState(() => vote.endsAt - vote.durationMs);
 
   useEffect(() => {
@@ -107,8 +109,9 @@ export function PanelVoteCard({ vote, onCast }: PanelVoteCardProps) {
             <button
               key={o.tierId}
               type="button"
-              onClick={() => onCast(o.tierId)}
-              className="flex items-center gap-2 rounded-[2px] border-2 border-[#1B1F27] bg-[#0B0E13] p-[3px] pr-2 hover:border-[#2A3142]"
+              disabled={!canVote}
+              onClick={canVote ? () => onCast(o.tierId) : undefined}
+              className={`flex items-center gap-2 rounded-[2px] border-2 border-[#1B1F27] bg-[#0B0E13] p-[3px] pr-2 ${canVote ? "hover:border-[#2A3142]" : "cursor-default opacity-70"}`}
             >
               <span
                 className="font-display grid h-6 min-w-[26px] place-items-center rounded-[1px] px-1 text-[13px] text-white"
@@ -126,14 +129,20 @@ export function PanelVoteCard({ vote, onCast }: PanelVoteCardProps) {
       </div>
 
       <div className="px-[11px] pb-[11px]">
-        <button
-          type="button"
-          onClick={() => onCast(VOTE_ABSTAIN)}
-          className="font-pixel h-8 w-full rounded-[2px] text-[12px] font-bold text-[#C4C8D2]"
-          style={{ border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#171B22" }}
-        >
-          무효표
-        </button>
+        {canVote ? (
+          <button
+            type="button"
+            onClick={() => onCast(VOTE_ABSTAIN)}
+            className="font-pixel h-8 w-full rounded-[2px] text-[12px] font-bold text-[#C4C8D2]"
+            style={{ border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: "#171B22" }}
+          >
+            무효표
+          </button>
+        ) : (
+          <div className="font-pixel grid h-8 w-full place-items-center rounded-[2px] border-2 border-[#1B1F27] bg-[#0B0E13] text-[11px] font-bold text-[#6A707E]">
+            투표 미참여 중 · 현황만 표시
+          </div>
+        )}
       </div>
     </div>
   );

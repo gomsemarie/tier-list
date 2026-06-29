@@ -33,8 +33,6 @@ import { MiniResult } from "./MiniResult";
 import { PresenceAvatar } from "./PresenceAvatar";
 import { ModerationEffect } from "./ModerationEffect";
 import { PromotionEffect } from "./PromotionEffect";
-import { QuickVoteBar } from "./QuickVoteBar";
-import { DecisionCard } from "./DecisionCard";
 import { RoomDialog } from "./RoomDialog";
 import { StartVoteDialog } from "./StartVoteDialog";
 import { TierPopover } from "./TierPopover";
@@ -362,16 +360,16 @@ export function TierListPage() {
             <button
               type="button"
               onClick={() => room.setVoteOptOut(!room.voteOptOut)}
-              title="투표 간소화 — 켜면 큰 카드 대신 상단 미니 현황으로 보고, 원할 때만 한 표 던집니다"
+              title="클릭하면 투표 참여/미참여를 전환합니다. 미참여 시 투표에 표를 던질 수 없고 현황만 표시됩니다."
               className="flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold"
               style={
                 room.voteOptOut
                   ? { borderColor: "rgba(245,182,66,.5)", background: "rgba(245,182,66,.14)", color: "#F5B942" }
-                  : { borderColor: "var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }
+                  : { borderColor: "rgba(34,197,94,.45)", background: "rgba(34,197,94,.12)", color: "#4ADE80" }
               }
             >
-              <span className="size-[7px] rounded-full" style={{ background: room.voteOptOut ? "#F5B942" : "#6A707E" }} />
-              투표 간소화
+              <span className="size-[7px] rounded-full" style={{ background: room.voteOptOut ? "#F5B942" : "#22C55E" }} />
+              {room.voteOptOut ? "투표 미참여" : "투표 참여"}
             </button>
           )}
           <button
@@ -531,6 +529,10 @@ export function TierListPage() {
            history={room.room.history ?? []}
            activeVote={room.activeVote}
            voteOptOut={room.voteOptOut}
+           activeDecision={room.activeDecision}
+           myUserId={room.authUser?.id}
+           onDecisionJoin={room.joinDecision}
+           onDecisionLeave={room.leaveDecision}
            canSuper={
              !!room.authUser?.scStyle && room.authUser.unlocked.includes(room.authUser.scStyle)
            }
@@ -571,6 +573,31 @@ export function TierListPage() {
             room.room
               ? (tierId) => {
                   room.proposeDecision(menu.item.id, tierId);
+                  setMenu(null);
+                }
+              : undefined
+          }
+          lock={
+            room.room?.locks?.[menu.item.id]
+              ? {
+                  tierLabel: room.room.locks[menu.item.id].label,
+                  until: room.room.locks[menu.item.id].until,
+                  reason: room.room.locks[menu.item.id].reason,
+                }
+              : undefined
+          }
+          onLock={
+            canModerate && room.room && !room.room.locks?.[menu.item.id]
+              ? (seconds) => {
+                  room.lockTier(menu.item.id, seconds);
+                  setMenu(null);
+                }
+              : undefined
+          }
+          onUnlock={
+            canModerate && room.room?.locks?.[menu.item.id]
+              ? () => {
+                  room.unlockTier(menu.item.id);
                   setMenu(null);
                 }
               : undefined
@@ -639,19 +666,6 @@ export function TierListPage() {
             room.logout();
           }}
           onClose={() => setAccount(false)}
-        />
-      )}
-
-      {room.room && room.voteOptOut && room.activeVote && (
-        <QuickVoteBar vote={room.activeVote} myUserId={room.authUser?.id} onCast={room.castVote} />
-      )}
-
-      {room.room && room.activeDecision && (
-        <DecisionCard
-          decision={room.activeDecision}
-          myUserId={room.authUser?.id}
-          onJoin={room.joinDecision}
-          onLeave={room.leaveDecision}
         />
       )}
 

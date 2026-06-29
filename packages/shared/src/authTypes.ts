@@ -12,6 +12,8 @@ export type AuthUser = {
   frame?: string;
   /** Equipped superchat style id. */
   scStyle?: string;
+  /** Spectator buff contributed to one's team in a 결정전 ("" = none). */
+  specBuff?: string;
 };
 
 /** Public-facing user info shown in the profile overlay (no private data). */

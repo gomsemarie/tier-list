@@ -72,6 +72,7 @@ export function MemberOverlay({
   const muted = (member.mutedUntil ?? 0) > now;
   const placeBanned = (member.placeBannedUntil ?? 0) > now;
   const voteBanned = (member.voteBannedUntil ?? 0) > now;
+  const duelBanned = (member.duelBannedUntil ?? 0) > now;
   const badge = roleBadge(member.role);
   const showControls = canModerate && !isSelf;
   const showAttackOnly = !showControls && canAttack && !isSelf;
@@ -92,11 +93,12 @@ export function MemberOverlay({
             </span>
           </div>
           {member.username && <div className="text-[12px] text-[#8A8F9C]">@{member.username}</div>}
-          {(muted || placeBanned || voteBanned) && (
+          {(muted || placeBanned || voteBanned || duelBanned) && (
             <div className="flex flex-wrap justify-center gap-1.5">
               {muted && <BanChip>채팅 금지</BanChip>}
               {placeBanned && <BanChip>배치 금지</BanChip>}
               {voteBanned && <BanChip>투표 금지</BanChip>}
+              {duelBanned && <BanChip>결투 금지</BanChip>}
             </div>
           )}
         </div>
@@ -125,6 +127,13 @@ export function MemberOverlay({
                 active={voteBanned}
                 onClear={() => onModerate("banVote", 0)}
                 onPick={(s) => onModerate("banVote", s)}
+              />
+              <BanSection
+                icon={<Swords className="size-3.5" />}
+                label="결투 금지"
+                active={duelBanned}
+                onClear={() => onModerate("banDuel", 0)}
+                onPick={(s) => onModerate("banDuel", s)}
               />
               <div className="flex gap-2">
                 <button

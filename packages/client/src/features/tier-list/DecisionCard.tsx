@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Swords, Eye, Shield, X, Info, ArrowRight, Heart, Zap, Scale, Trophy, Check, UserPlus, type LucideIcon } from "lucide-react";
+import { Swords, Eye, Shield, X, Info, ArrowRight, Heart, Zap, Scale, Trophy, Check, UserPlus, TrendingUp, Dices, type LucideIcon } from "lucide-react";
 
 import type { DecisionSnapshot, DecisionSide, DecisionRole, DuelParticipant, DecisionBuffs } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
@@ -125,7 +125,8 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
     return (
       <button
         type="button"
-        onClick={() => onJoin(side, role)}
+        title={active ? "다시 누르면 참가 해제" : undefined}
+        onClick={() => (active ? onLeave() : onJoin(side, role))}
         className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[6px] text-[12px] font-bold transition-colors"
         style={
           active
@@ -145,14 +146,14 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
     const accentText = isPro ? "#4ADE80" : "#F87171";
     return (
       <div
-        className="flex-1 rounded-[9px] border p-3"
+        className="rounded-[9px] border p-2.5"
         style={{
           borderColor: isPro ? "rgba(34,197,94,.4)" : "rgba(239,68,68,.4)",
           background: isPro ? "rgba(34,197,94,.05)" : "rgba(239,68,68,.05)",
         }}
       >
-        <div className="mb-2.5 flex items-center gap-1.5">
-          <span className="grid size-[22px] place-items-center rounded-[5px]" style={{ background: accent }}>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <span className="grid size-[22px] shrink-0 place-items-center rounded-[5px]" style={{ background: accent }}>
             {isPro ? <Swords className="size-3.5 text-white" /> : <Shield className="size-3.5 text-white" />}
           </span>
           <span className="text-[14px] font-extrabold" style={{ color: accentText }}>
@@ -161,16 +162,20 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
           <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] font-bold text-[#8A8F9C]">
             {isPro ? "티어 이동" : "현재 유지"}
           </span>
-        </div>
-        <div className="flex items-center gap-3 text-[12px] font-bold">
-          <span className="flex items-center gap-1" style={{ color: accentText }}>
-            <Swords className="size-3.5" /> 결투 {roster.fighters.length}
+          <span className="ml-auto flex items-center gap-3 text-[12px] font-bold">
+            <span className="flex items-center gap-1" style={{ color: accentText }}>
+              <Swords className="size-3.5" /> {roster.fighters.length}
+            </span>
+            <span className="flex items-center gap-1 text-[#67E8F9]">
+              <Eye className="size-3.5" /> {roster.spectators.length}
+            </span>
           </span>
-          <span className="flex items-center gap-1 text-[#67E8F9]">
-            <Eye className="size-3.5" /> 관전 {roster.spectators.length}
-          </span>
         </div>
-        <BuffRow buffs={isPro ? d.buffs.pro : d.buffs.con} duel={d.phase === "duel"} />
+        <BuffRow
+          own={isPro ? d.buffs.pro : d.buffs.con}
+          opp={isPro ? d.buffs.con : d.buffs.pro}
+          duel={d.phase === "duel"}
+        />
         <SpecCards list={roster.spectators} />
       </div>
     );
@@ -178,7 +183,7 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
 
   return (
     <div
-      className="w-full overflow-hidden rounded-[10px] border"
+      className="w-full shrink-0 overflow-hidden rounded-[10px] border"
       style={{ background: "#13161D", borderColor: "#2A303C", boxShadow: "0 8px 24px rgba(0,0,0,.45)", animation: "popIn .18s ease both" }}
     >
       {/* Header */}
@@ -244,7 +249,7 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
               </div>
             )}
 
-            <div className="flex gap-2.5">
+            <div className="space-y-2">
               {side("pro")}
               {side("con")}
             </div>
@@ -311,26 +316,89 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
   );
 }
 
-/** Pooled spectator-buff chips for one side (🛡 absorb / ❤ vigor / ⚡ surge). */
-function BuffRow({ buffs, duel }: { buffs: DecisionBuffs; duel: boolean }) {
-  const chips: { Icon: LucideIcon; text: string }[] = [];
-  if (buffs.bulwark) chips.push({ Icon: Shield, text: duel ? `${buffs.bulwarkLeft}/${buffs.bulwark}` : `${buffs.bulwark}` });
-  if (buffs.vigor) chips.push({ Icon: Heart, text: `${buffs.vigor}` });
-  if (buffs.surge) chips.push({ Icon: Zap, text: `${buffs.surge}` });
-  if (!chips.length) return null;
+const BUFF_META: Record<"bulwark" | "surge" | "gamble" | "life", { Icon: LucideIcon; name: string; color: string; desc: string }> = {
+  bulwark: { Icon: Shield, name: "방어", color: "#67E8F9", desc: "아군의 난이도 상승을 흡수해 막아냅니다." },
+  surge: { Icon: Zap, name: "공격", color: "#FBBF24", desc: "상대 시작 난이도를 높입니다." },
+  gamble: { Icon: Dices, name: "도박", color: "#C084FC", desc: "아군 난이도가 오를 때마다 인원수만큼 ±1 도박 — 감소도, 폭증도 가능합니다." },
+  life: { Icon: Heart, name: "목숨", color: "#F472B6", desc: "탈락 시 목숨을 소모해 부활합니다 (팀 공유)." },
+};
+
+/** Game-style buff badge — icon + value, with a detail tooltip on hover. */
+function BuffBadge({ kind, value, sub }: { kind: keyof typeof BUFF_META; value: string; sub: string }) {
+  const m = BUFF_META[kind];
+  const Icon = m.Icon;
   return (
-    <div className="mt-2 flex flex-wrap gap-1">
-      {chips.map(({ Icon, text }, i) => (
-        <span key={i} className="flex items-center gap-1 rounded bg-[#1A1F28] px-1.5 py-0.5 text-[11px] font-bold text-[#C4C8D2]">
-          <Icon className="size-3" /> {text}
-        </span>
-      ))}
+    <div className="group/buff relative">
+      <span
+        className="flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px] font-extrabold"
+        style={{ color: m.color, borderColor: `${m.color}55`, background: `${m.color}14` }}
+      >
+        <Icon className="size-3" /> {value}
+      </span>
+      <div className="pointer-events-none invisible absolute top-full left-0 z-20 mt-1 w-[170px] rounded-[7px] border border-[#2A303C] bg-[#0B0E13] px-2.5 py-2 opacity-0 shadow-[0_10px_28px_rgba(0,0,0,.6)] transition-opacity group-hover/buff:visible group-hover/buff:opacity-100">
+        <div className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: m.color }}>
+          <Icon className="size-3.5" /> {m.name} <span className="ml-auto text-[#8A8F9C]">{sub}</span>
+        </div>
+        <div className="mt-1 text-[10px] leading-relaxed text-[#9AA0AD]">{m.desc}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Received start-difficulty penalty badge from the opponent's 공격. */
+function NetBadge({ oppSurge }: { oppSurge: number }) {
+  if (oppSurge <= 0) return null;
+  const color = "#FB7185";
+  return (
+    <div className="group/buff relative">
+      <span
+        className="flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px] font-extrabold"
+        style={{ color, borderColor: `${color}55`, background: `${color}14` }}
+      >
+        <TrendingUp className="size-3" /> 시작 +{oppSurge}
+      </span>
+      <div className="pointer-events-none invisible absolute top-full left-0 z-20 mt-1 w-[180px] rounded-[7px] border border-[#2A303C] bg-[#0B0E13] px-2.5 py-2 opacity-0 shadow-[0_10px_28px_rgba(0,0,0,.6)] transition-opacity group-hover/buff:visible group-hover/buff:opacity-100">
+        <div className="text-[11px] font-bold" style={{ color }}>
+          받는 시작 페널티 +{oppSurge}
+        </div>
+        <div className="mt-1 text-[10px] leading-relaxed text-[#9AA0AD]">
+          상대 공격 +{oppSurge} 만큼 더 불리하게 시작합니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Buff badges for one side: pooled buffs + the received start penalty. */
+function BuffRow({ own, opp, duel }: { own: DecisionBuffs; opp: DecisionBuffs; duel: boolean }) {
+  if (!own.bulwark && !own.surge && !own.gamble && !own.life && !opp.surge) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {own.bulwark > 0 && (
+        <BuffBadge
+          kind="bulwark"
+          value={duel ? `${own.bulwarkLeft}/${own.bulwark}` : `${own.bulwark}`}
+          sub={duel ? `남은 ${own.bulwarkLeft}회` : `${own.bulwark}회`}
+        />
+      )}
+      {own.surge > 0 && <BuffBadge kind="surge" value={`${own.surge}`} sub={`상대 +${own.surge}`} />}
+      {own.gamble > 0 && <BuffBadge kind="gamble" value={`${own.gamble}`} sub={`±${own.gamble} 도박`} />}
+      {own.life > 0 && (
+        <BuffBadge
+          kind="life"
+          value={duel ? `${own.lifeLeft}/${own.life}` : `+${own.life}`}
+          sub={duel ? `남은 ${own.lifeLeft}` : `+${own.life} 목숨`}
+        />
+      )}
+      <NetBadge oppSurge={opp.surge} />
     </div>
   );
 }
 
 /** Live NvN board: survivor tally + active matchups with each fighter's stack. */
 function DuelBoard({ duel }: { duel: NonNullable<DecisionSnapshot["duel"]> }) {
+  const now = Date.now();
+  const live = duel.feed.filter((e) => now - e.ts < 3500).slice(-4);
   const dot = (alive: number, total: number) =>
     Array.from({ length: total }, (_, i) => (
       <span
@@ -352,6 +420,37 @@ function DuelBoard({ duel }: { duel: NonNullable<DecisionSnapshot["duel"]> }) {
           {duel.conAlive}
         </span>
       </div>
+      {live.length > 0 && (
+        <div className="space-y-0.5 rounded-[6px] bg-[#0E1117] px-2 py-1.5">
+          {live.map((e, i) => {
+            const op = Math.max(0.35, 1 - (now - e.ts) / 3500);
+            return (
+              <div
+                key={`${e.ts}-${i}`}
+                className="flex items-center justify-center gap-1.5 text-[10px] font-bold"
+                style={{ opacity: op }}
+              >
+                <span className="max-w-[100px] truncate" style={{ color: e.side === "pro" ? "#4ADE80" : "#F87171" }}>
+                  {e.name}
+                </span>
+                {e.kind === "absorb" ? (
+                  <span className="flex items-center gap-1 text-[#67E8F9]">
+                    <Shield className="size-3" /> 방어로 막음
+                  </span>
+                ) : e.kind === "life" ? (
+                  <span className="flex items-center gap-1 text-[#F472B6]">
+                    <Heart className="size-3" /> 목숨 소모 — 부활!
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1" style={{ color: e.amount > 0 ? "#FB7185" : "#4ADE80" }}>
+                    <Dices className="size-3 text-[#C084FC]" /> 도박 {e.amount > 0 ? `+${e.amount}` : e.amount}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {duel.pairs.length > 0 && (
         <div className="space-y-1.5">
           <div className="text-center text-[10px] font-bold tracking-wide text-[#6A707E]">진행 중인 대결</div>
@@ -372,6 +471,46 @@ function DuelBoard({ duel }: { duel: NonNullable<DecisionSnapshot["duel"]> }) {
           ))}
         </div>
       )}
+      {duel.results.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-center text-[10px] font-bold tracking-wide text-[#6A707E]">종료된 대결</div>
+          {duel.results.map((r, i) => {
+            const proWon = r.winnerSide === "pro";
+            const proF = proWon ? r.winner : r.loser;
+            const conF = proWon ? r.loser : r.winner;
+            return (
+              <DoneRow key={`r${i}`} proF={proF} conF={conF} proWon={proWon} />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A finished matchup row: winner highlighted, loser struck-through + greyed. */
+function DoneRow({ proF, conF, proWon }: { proF: DuelParticipant; conF: DuelParticipant; proWon: boolean }) {
+  const name = (p: DuelParticipant, won: boolean) => (
+    <span className={`truncate text-[11px] font-bold ${won ? "text-[#FDE047]" : "text-[#8A8F9C] line-through"}`}>
+      {p.name}
+    </span>
+  );
+  const av = (p: DuelParticipant, won: boolean) => (
+    <Avatar name={p.name} src={p.avatar} frame={p.frame} size={20} spin={false} className={won ? "" : "grayscale opacity-60"} />
+  );
+  return (
+    <div className="flex items-center gap-2 rounded-[6px] bg-[#0E1117]/50 px-2.5 py-1">
+      <div className={`flex min-w-0 flex-1 items-center justify-end gap-1.5 ${proWon ? "" : "opacity-60"}`}>
+        {proWon && <Trophy className="size-3 shrink-0 text-[#FDE047]" />}
+        {name(proF, proWon)}
+        {av(proF, proWon)}
+      </div>
+      <span className="font-arcade shrink-0 text-[9px] font-bold text-[#FF6B5A]">KO</span>
+      <div className={`flex min-w-0 flex-1 items-center gap-1.5 ${!proWon ? "" : "opacity-60"}`}>
+        {av(conF, !proWon)}
+        {name(conF, !proWon)}
+        {!proWon && <Trophy className="size-3 shrink-0 text-[#FDE047]" />}
+      </div>
     </div>
   );
 }

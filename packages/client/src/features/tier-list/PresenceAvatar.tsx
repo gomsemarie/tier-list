@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Ban, ListX, MessageSquareOff, type LucideIcon } from "lucide-react";
+import { Ban, ListX, MessageSquareOff, Swords, type LucideIcon } from "lucide-react";
 
 import type { Member } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
@@ -25,6 +25,7 @@ export function PresenceAvatar({
     { key: "mute", until: member.mutedUntil, dur: member.mutedFor, color: "#FB7185", Icon: MessageSquareOff, label: "채팅금지" },
     { key: "place", until: member.placeBannedUntil, dur: member.placeBannedFor, color: "#FB923C", Icon: Ban, label: "배치금지" },
     { key: "vote", until: member.voteBannedUntil, dur: member.voteBannedFor, color: "#A78BFA", Icon: ListX, label: "투표금지" },
+    { key: "duel", until: member.duelBannedUntil, dur: member.duelBannedFor, color: "#F87171", Icon: Swords, label: "결투금지" },
   ];
   const active = debuffs.filter((d) => d.until && d.until > now);
 

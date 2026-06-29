@@ -88,6 +88,18 @@ export function LivePanel({
 
   const notice = [...messages].reverse().find((m) => m.kind === "announce");
 
+  // Interleave the live vote / decision cards into the chat stream by their start
+  // time, so they read like a posted message and scroll with the conversation.
+  type FeedItem =
+    | { kind: "msg"; ts: number; m: ChatMessage }
+    | { kind: "vote"; ts: number }
+    | { kind: "decision"; ts: number };
+  const feedItems: FeedItem[] = messages.map((m) => ({ kind: "msg" as const, ts: m.ts, m }));
+  if (activeVote) feedItems.push({ kind: "vote", ts: activeVote.endsAt - activeVote.durationMs });
+  if (activeDecision)
+    feedItems.push({ kind: "decision", ts: activeDecision.endsAt - activeDecision.durationMs });
+  feedItems.sort((a, b) => a.ts - b.ts);
+
   // Command helpers: autocomplete while typing "/pl", usage hint after "/place ".
   const token = text.toLowerCase();
   const typingCommand = /^\/\S*$/.test(text);
@@ -165,19 +177,6 @@ export function LivePanel({
         </TabButton>
       </div>
 
-      {activeVote && <PanelVoteCard vote={activeVote} onCast={onCast} canVote={!voteOptOut} />}
-
-      {activeDecision && (
-        <div className="mx-3 mt-3">
-          <DecisionCard
-            decision={activeDecision}
-            myUserId={myUserId}
-            onJoin={onDecisionJoin}
-            onLeave={onDecisionLeave}
-          />
-        </div>
-      )}
-
       {tab === "history" ? (
         <div className="flex flex-1 flex-col overflow-y-auto px-3 py-2">
           {history.length === 0 ? (
@@ -221,10 +220,23 @@ export function LivePanel({
           )}
 
           <div ref={feedRef} className="flex flex-1 flex-col gap-[9px] overflow-y-auto px-3 pt-3 pb-1">
-            {messages.length === 0 && (
+            {feedItems.length === 0 && (
               <div className="grid flex-1 place-items-center text-[12px] text-[#4A4F5B]">아직 메시지가 없습니다.</div>
             )}
-            {messages.map((m) => {
+            {feedItems.map((it) => {
+              if (it.kind === "vote")
+                return <PanelVoteCard key="vote" vote={activeVote!} onCast={onCast} canVote={!voteOptOut} />;
+              if (it.kind === "decision")
+                return (
+                  <DecisionCard
+                    key="decision"
+                    decision={activeDecision!}
+                    myUserId={myUserId}
+                    onJoin={onDecisionJoin}
+                    onLeave={onDecisionLeave}
+                  />
+                );
+              const m = it.m;
               if (m.rally) {
                 const r = m.rally;
                 // aLevel/bLevel = difficulty each side has *taken*; the pressure a

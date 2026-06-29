@@ -102,7 +102,7 @@ export type RoomConnection = {
   updateProfile: (patch: ProfileUpdate) => Promise<UpdateResult>;
   fetchUser: (id: string) => Promise<PublicUser | null>;
   redeemCode: (code: string) => Promise<RedeemResult>;
-  equipPerk: (patch: { frame?: string; scStyle?: string; specBuff?: string }) => Promise<UpdateResult>;
+  equipPerk: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => Promise<UpdateResult>;
   fetchCodes: () => Promise<CodeInfo[]>;
   issueCode: (perks: string[]) => Promise<IssueCodeResult>;
   createRoom: (title: string, isPublic?: boolean, image?: string) => void;
@@ -390,7 +390,7 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const equipPerk = useCallback(
-    async (patch: { frame?: string; scStyle?: string; specBuff?: string }) => {
+    async (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => {
       const res = await emitAck<UpdateResult>(
         socketRef.current,
         "perk:equip",

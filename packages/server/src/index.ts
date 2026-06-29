@@ -9,7 +9,7 @@ import {
   tierListReducer,
   type Action,
 } from "@tier-list/shared";
-import { perkById, rolePriority, VOTE_ABSTAIN, isSpecBuff } from "@tier-list/shared";
+import { perkById, rolePriority, VOTE_ABSTAIN, isSpecBuff, isCombatBuff } from "@tier-list/shared";
 import type {
   AuthResult,
   AuthUser,
@@ -79,16 +79,20 @@ type Room = {
       frame: string;
       /** Equipped spectator buff id ("" = none); contributes to a 결정전 team. */
       specBuff: string;
+      /** Equipped combat buff id ("" = none); contributes when fighting. */
+      combatBuff: string;
     }
   >;
   /** Per-account moderation timers (epoch ms). Not persisted — reset on restart. */
   mutes: Map<string, number>;
   placeBans: Map<string, number>;
   voteBans: Map<string, number>;
+  duelBans: Map<string, number>;
   /** Original ban durations (ms), for the client's depleting timer ring. */
   muteDur: Map<string, number>;
   placeBanDur: Map<string, number>;
   voteBanDur: Map<string, number>;
+  duelBanDur: Map<string, number>;
   /** In-progress tier vote (ephemeral, not persisted). */
   vote: VoteState | null;
   voteTimer: ReturnType<typeof setTimeout> | null;
@@ -100,7 +104,7 @@ type Room = {
   decision: DecisionState | null;
   decisionTimer: ReturnType<typeof setTimeout> | null;
   /** Items pinned to a tier by a decision match, a vote, or an admin: itemId → lock. */
-  tierLocks: Map<string, { tierId: string; until: number; reason: "decision" | "vote" | "admin" }>;
+  tierLocks: Map<string, { tierId: string; until: number; dur: number; reason: "decision" | "vote" | "admin" }>;
   /** Re-propose ban after a defender win: itemId → epoch ms. */
   decisionCooldown: Map<string, number>;
 };
@@ -121,16 +125,25 @@ type DecisionState = {
   duel?: {
     /** Active simultaneous matchups. */
     pairs: { proId: string; conId: string; pk: string }[];
+    /** Decided matchups (KOs), newest last. */
+    results: { winnerId: string; loserId: string; winnerSide: DecisionSide }[];
+    /** Recent buff firings for the live effect ticker (capped). */
+    feed: { kind: "absorb" | "gamble" | "life"; side: DecisionSide; name: string; amount: number; ts: number }[];
     proAlive: string[];
     conAlive: string[];
     proTotal: number;
     conTotal: number;
-    /** Pending difficulty (½-stack of a fallen teammate) applied on next pairing. */
+    /** Pending difficulty (split-stack of a fallen teammate) applied on next pairing. */
     debt: Map<string, number>;
-    /** Spectator buffs locked in at duel start. */
-    buffs: { pro: { bulwark: number; vigor: number; surge: number }; con: { bulwark: number; vigor: number; surge: number } };
-    /** Remaining 방벽 absorb charges per side. */
+    /** Pooled buffs (spectator + combat) locked in at duel start. */
+    buffs: {
+      pro: { bulwark: number; surge: number; gamble: number; life: number };
+      con: { bulwark: number; surge: number; gamble: number; life: number };
+    };
+    /** Remaining 방어 absorb charges per side. */
     bulwarkLeft: { pro: number; con: number };
+    /** Remaining 목숨 reserve lives per side. */
+    reserveLives: { pro: number; con: number };
   };
   result?: { winner: DecisionSide; outcome: "moved" | "kept"; toTier: string | null; lockUntil?: number };
 };
@@ -182,10 +195,11 @@ const attackCooldownPair = new Map<string, number>(); // `${roomId}:${attacker}:
 const parryLevel = new Map<string, number>();
 
 // 티어 결정전 (decision match) timings.
-const DECISION_SIGNUP_MS = 30_000; // recruit window
+const DECISION_SIGNUP_MS = 10_000; // recruit window
 const DECISION_BALANCE_MS = 10_000; // equalize-fighters window after signup (configurable)
 const DECISION_LOCK_MS = 60 * 60 * 1000; // challenger win → 1h tier lock
 const DECISION_CON_COOLDOWN_MS = 60_000; // defender win → 60s re-propose ban
+const DUEL_BAN_ON_LOSS_MS = 10_000; // KO'd fighter can't duel again for 10s
 const DECISION_RESULT_HOLD_MS = 6_000; // result card shown this long before clearing
 
 // --- Password hashing (Node crypto scrypt — no external deps) ----------------
@@ -221,6 +235,7 @@ function toAuthUser(row: UserRow): AuthUser {
     frame: row.frame || undefined,
     scStyle: row.sc_style || undefined,
     specBuff: row.spec_buff || undefined,
+    combatBuff: row.combat_buff || undefined,
   };
 }
 function toPublicUser(row: UserRow): PublicUser {
@@ -313,9 +328,11 @@ for (const persisted of loadAllRooms()) {
     mutes: new Map(),
     placeBans: new Map(),
     voteBans: new Map(),
+    duelBans: new Map(),
     muteDur: new Map(),
     placeBanDur: new Map(),
     voteBanDur: new Map(),
+    duelBanDur: new Map(),
     vote: null,
     voteTimer: null,
     voteOptOut: new Set(),
@@ -391,6 +408,7 @@ function snapshot(room: Room): RoomSnapshot {
     const mutedUntil = room.mutes.get(m.userId);
     const placeBannedUntil = room.placeBans.get(m.userId);
     const voteBannedUntil = room.voteBans.get(m.userId);
+    const duelBannedUntil = room.duelBans.get(m.userId);
     return {
       id,
       name: m.name,
@@ -404,15 +422,17 @@ function snapshot(room: Room): RoomSnapshot {
         placeBannedUntil && placeBannedUntil > now ? placeBannedUntil : undefined,
       voteBannedUntil:
         voteBannedUntil && voteBannedUntil > now ? voteBannedUntil : undefined,
+      duelBannedUntil: duelBannedUntil && duelBannedUntil > now ? duelBannedUntil : undefined,
       mutedFor: mutedUntil && mutedUntil > now ? room.muteDur.get(m.userId) : undefined,
       placeBannedFor: placeBannedUntil && placeBannedUntil > now ? room.placeBanDur.get(m.userId) : undefined,
       voteBannedFor: voteBannedUntil && voteBannedUntil > now ? room.voteBanDur.get(m.userId) : undefined,
+      duelBannedFor: duelBannedUntil && duelBannedUntil > now ? room.duelBanDur.get(m.userId) : undefined,
     };
   });
   const locks: RoomSnapshot["locks"] = {};
   for (const [itemId, l] of room.tierLocks) {
     if (l.until > now)
-      locks[itemId] = { tierId: l.tierId, ...tierMeta(room, l.tierId), until: l.until, reason: l.reason };
+      locks[itemId] = { tierId: l.tierId, ...tierMeta(room, l.tierId), until: l.until, dur: l.dur, reason: l.reason };
   }
   return {
     id: room.id,
@@ -676,7 +696,7 @@ function applyVoteLock(room: Room, itemId: string, durationMs: number) {
   if (durationMs < VOTE_LOCK_MIN_DURATION_MS) return;
   const tierId = tierOfItem(room.state, itemId);
   if (!tierId) return; // unplaced — nothing to pin
-  room.tierLocks.set(itemId, { tierId, until: Date.now() + VOTE_LOCK_MS, reason: "vote" });
+  room.tierLocks.set(itemId, { tierId, until: Date.now() + VOTE_LOCK_MS, dur: VOTE_LOCK_MS, reason: "vote" });
 }
 
 /** Tally the round and enter the "result" phase, then move/revote/clear. */
@@ -783,18 +803,26 @@ function memberInfo(room: Room, userId: string): DuelParticipant {
   return { userId, name: "참가자" };
 }
 
-/** Pool a side's spectator buffs from their equipped specBuff (member records). */
-function aggregateBuffs(room: Room, spectatorIds: Iterable<string>) {
+/** Pool a side's buffs: spectators' specBuff + fighters' combatBuff (member records). */
+function aggregateBuffs(room: Room, fighterIds: Iterable<string>, spectatorIds: Iterable<string>) {
   let bulwark = 0;
-  let vigor = 0;
   let surge = 0;
+  let gamble = 0;
+  let life = 0;
+  const member = (id: string) => [...room.members.values()].find((x) => x.userId === id);
   for (const id of spectatorIds) {
-    const m = [...room.members.values()].find((x) => x.userId === id);
-    if (m?.specBuff === "bulwark") bulwark += 2;
-    else if (m?.specBuff === "vigor") vigor += 1;
-    else if (m?.specBuff === "surge") surge += 1;
+    const b = member(id)?.specBuff;
+    if (b === "bulwark") bulwark += 1;
+    else if (b === "surge") surge += 1;
+    else if (b === "gamble") gamble += 1;
   }
-  return { bulwark, vigor, surge };
+  for (const id of fighterIds) {
+    const b = member(id)?.combatBuff;
+    if (b === "bulwark") bulwark += 1;
+    else if (b === "surge") surge += 1;
+    else if (b === "life") life += 1;
+  }
+  return { bulwark, surge, gamble, life };
 }
 
 /** Which duel side a fighter belongs to (during an active duel), or null. */
@@ -875,6 +903,12 @@ function buildDecisionSnapshot(room: Room): DecisionSnapshot | null {
             proLevel: parryLevel.get(`${room.id}:${p.pk}:${p.proId}`) ?? 0,
             conLevel: parryLevel.get(`${room.id}:${p.pk}:${p.conId}`) ?? 0,
           })),
+          results: d.duel.results.map((r) => ({
+            winner: memberInfo(room, r.winnerId),
+            loser: memberInfo(room, r.loserId),
+            winnerSide: r.winnerSide,
+          })),
+          feed: d.duel.feed.filter((e) => Date.now() - e.ts < 4000),
           proAlive: d.duel.proAlive.length,
           conAlive: d.duel.conAlive.length,
           proTotal: d.duel.proTotal,
@@ -898,10 +932,10 @@ function buildDecisionSnapshot(room: Room): DecisionSnapshot | null {
 function buffsView(room: Room, d: DecisionState, side: DecisionSide) {
   if (d.duel) {
     const b = d.duel.buffs[side];
-    return { ...b, bulwarkLeft: d.duel.bulwarkLeft[side] };
+    return { ...b, bulwarkLeft: d.duel.bulwarkLeft[side], lifeLeft: d.duel.reserveLives[side] };
   }
-  const b = aggregateBuffs(room, d[side].spectators);
-  return { ...b, bulwarkLeft: b.bulwark };
+  const b = aggregateBuffs(room, d[side].fighters, d[side].spectators);
+  return { ...b, bulwarkLeft: b.bulwark, lifeLeft: b.life };
 }
 
 function broadcastDecision(io: Server, room: Room) {
@@ -1053,11 +1087,13 @@ function startDecisionDuel(io: Server, room: Room) {
   const proAlive = [...d.pro.fighters];
   const conAlive = [...d.con.fighters];
   const buffs = {
-    pro: aggregateBuffs(room, d.pro.spectators),
-    con: aggregateBuffs(room, d.con.spectators),
+    pro: aggregateBuffs(room, d.pro.fighters, d.pro.spectators),
+    con: aggregateBuffs(room, d.con.fighters, d.con.spectators),
   };
   d.duel = {
     pairs: [],
+    results: [],
+    feed: [],
     proAlive,
     conAlive,
     proTotal: proAlive.length,
@@ -1065,6 +1101,7 @@ function startDecisionDuel(io: Server, room: Room) {
     debt: new Map(),
     buffs,
     bulwarkLeft: { pro: buffs.pro.bulwark, con: buffs.con.bulwark },
+    reserveLives: { pro: buffs.pro.life, con: buffs.con.life },
   };
   pushMessage(
     room,
@@ -1083,10 +1120,10 @@ function rematchDuel(io: Server, room: Room) {
   const engaged = new Set(du.pairs.flatMap((p) => [p.proId, p.conId]));
   const freePro = du.proAlive.filter((id) => !engaged.has(id));
   const freeCon = du.conAlive.filter((id) => !engaged.has(id));
-  // Starting difficulty = inherited debt + opponent 각성 − own 응원 (floored at 0).
+  // Starting difficulty = inherited debt + opponent 공격 (surge), floored at 0.
   const startLevel = (side: DecisionSide, id: string) => {
     const opp = side === "pro" ? "con" : "pro";
-    return Math.max(0, (du.debt.get(id) ?? 0) + du.buffs[opp].surge - du.buffs[side].vigor);
+    return Math.max(0, (du.debt.get(id) ?? 0) + du.buffs[opp].surge);
   };
   while (freePro.length && freeCon.length) {
     const proId = freePro.shift()!;
@@ -1111,8 +1148,8 @@ function rematchDuel(io: Server, room: Room) {
   }
 }
 
-/** A fighter missed in a duel pair → eliminate them, bleed ½ their stack onto a
- *  teammate, then re-pair survivors or finish the match. */
+/** A fighter missed in a duel pair → 목숨 revives them if any, else eliminate +
+ *  split their stack across surviving teammates, record the KO, then re-pair. */
 function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
   const d = room.decision;
   if (!d?.duel || d.phase !== "duel") return;
@@ -1121,28 +1158,44 @@ function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
   if (pairIdx < 0) return;
   const [pair] = du.pairs.splice(pairIdx, 1);
   const loserSide: DecisionSide = pair.proId === loserId ? "pro" : "con";
+  const winnerId = pair.proId === loserId ? pair.conId : pair.proId;
+  const loserStack = parryLevel.get(`${room.id}:${pk}:${loserId}`) ?? 0;
+  parryLevel.delete(`${room.id}:${pk}:${pair.proId}`);
+  parryLevel.delete(`${room.id}:${pk}:${pair.conId}`);
+
+  // 목숨: a reserve life lets the fallen fighter survive and re-enter the pool.
+  if (du.reserveLives[loserSide] > 0) {
+    du.reserveLives[loserSide] -= 1;
+    du.feed.push({ kind: "life", side: loserSide, name: memberInfo(room, loserId).name, amount: 0, ts: Date.now() });
+    if (du.feed.length > 8) du.feed.shift();
+    rematchDuel(io, room);
+    broadcast(io, room);
+    broadcastDecision(io, room);
+    return;
+  }
+
   const alive = loserSide === "pro" ? du.proAlive : du.conAlive;
   const i = alive.indexOf(loserId);
   if (i >= 0) alive.splice(i, 1);
+  du.results.push({ winnerId, loserId, winnerSide: loserSide === "pro" ? "con" : "pro" });
+  // Defeated fighter is duel-banned for a while (shows as a profile debuff timer).
+  room.duelBans.set(loserId, Date.now() + DUEL_BAN_ON_LOSS_MS);
+  room.duelBanDur.set(loserId, DUEL_BAN_ON_LOSS_MS);
 
-  // Half the difficulty the loser was facing burdens a surviving teammate — the
-  // side's 응원 (vigor) softens that transfer.
-  const raw = Math.floor((parryLevel.get(`${room.id}:${pk}:${loserId}`) ?? 0) / 2);
-  const penalty = Math.max(0, raw - du.buffs[loserSide].vigor);
-  parryLevel.delete(`${room.id}:${pk}:${pair.proId}`);
-  parryLevel.delete(`${room.id}:${pk}:${pair.conId}`);
-  if (penalty > 0 && alive.length > 0) {
-    // Pick the living teammate currently under the least pressure.
-    const stackOf = (id: string) => {
-      const inPair = du.pairs.find((p) => p.proId === id || p.conId === id);
-      return inPair ? (parryLevel.get(`${room.id}:${inPair.pk}:${id}`) ?? 0) : (du.debt.get(id) ?? 0);
-    };
-    const target = [...alive].sort((a, b) => stackOf(a) - stackOf(b))[0];
-    const inPair = du.pairs.find((p) => p.proId === target || p.conId === target);
-    if (inPair) {
-      parryLevel.set(`${room.id}:${inPair.pk}:${target}`, stackOf(target) + penalty);
-    } else {
-      du.debt.set(target, (du.debt.get(target) ?? 0) + penalty);
+  // The fallen fighter's difficulty stack is split evenly (÷N) among survivors.
+  const survivors = [...alive];
+  if (loserStack > 0 && survivors.length > 0) {
+    const per = Math.floor(loserStack / survivors.length);
+    if (per > 0) {
+      for (const id of survivors) {
+        const inPair = du.pairs.find((p) => p.proId === id || p.conId === id);
+        if (inPair) {
+          const k = `${room.id}:${inPair.pk}:${id}`;
+          parryLevel.set(k, (parryLevel.get(k) ?? 0) + per);
+        } else {
+          du.debt.set(id, (du.debt.get(id) ?? 0) + per);
+        }
+      }
     }
   }
 
@@ -1173,7 +1226,7 @@ function resolveDecision(io: Server, room: Room, winner: DecisionSide) {
       ts: Date.now(),
     });
     const until = Date.now() + DECISION_LOCK_MS;
-    room.tierLocks.set(d.itemId, { tierId: target, until, reason: "decision" });
+    room.tierLocks.set(d.itemId, { tierId: target, until, dur: DECISION_LOCK_MS, reason: "decision" });
     d.result = { winner, outcome: "moved", toTier: target, lockUntil: until };
     pushMessage(
       room,
@@ -1333,12 +1386,12 @@ function issueCode(perkIds: string[]): IssueCodeResult {
 
 function equipPerk(
   userId: string,
-  patch: { frame?: string; scStyle?: string; specBuff?: string },
+  patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string },
 ): UpdateResult {
   const row = getUserById(userId);
   if (!row) return { ok: false, error: "사용자를 찾을 수 없어요." };
   const unlocked = new Set(parseUnlocked(row.unlocked));
-  const fields: Partial<Pick<UserRow, "frame" | "sc_style" | "spec_buff">> = {};
+  const fields: Partial<Pick<UserRow, "frame" | "sc_style" | "spec_buff" | "combat_buff">> = {};
   if (patch.frame !== undefined) {
     const f = patch.frame;
     if (f && (!unlocked.has(f) || perkById(f)?.type !== "frame"))
@@ -1356,6 +1409,11 @@ function equipPerk(
     const b = patch.specBuff;
     if (b && !isSpecBuff(b)) return { ok: false, error: "사용할 수 없는 관전 버프예요." };
     fields.spec_buff = b;
+  }
+  if (patch.combatBuff !== undefined) {
+    const b = patch.combatBuff;
+    if (b && !isCombatBuff(b)) return { ok: false, error: "사용할 수 없는 전투 버프예요." };
+    fields.combat_buff = b;
   }
   updateUser(userId, fields);
   return { ok: true, user: toAuthUser(getUserById(userId)!) };
@@ -1466,6 +1524,7 @@ io.on("connection", (socket: Socket) => {
       isAdmin: authedUser.isAdmin,
       frame: authedUser.frame ?? "",
       specBuff: authedUser.specBuff ?? "",
+      combatBuff: authedUser.combatBuff ?? "",
     });
     if (!rejoin) {
       pushMessage(room, message("system", `${name} 님이 입장했습니다.`, "system"));
@@ -1727,6 +1786,7 @@ io.on("connection", (socket: Socket) => {
           isAdmin: result.user.isAdmin,
           frame: result.user.frame ?? "",
           specBuff: result.user.specBuff ?? "",
+          combatBuff: result.user.combatBuff ?? "",
         });
         broadcast(io, room);
       }
@@ -1751,7 +1811,7 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "perk:equip",
-    (patch: { frame?: string; scStyle?: string; specBuff?: string }, ack?: Ack<UpdateResult>) => {
+    (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }, ack?: Ack<UpdateResult>) => {
       if (!authedUser) {
         ack?.({ ok: false, error: "로그인이 필요합니다." });
         return;
@@ -1765,6 +1825,7 @@ io.on("connection", (socket: Socket) => {
           const m = room.members.get(socket.id)!;
           m.frame = result.user.frame ?? "";
           m.specBuff = result.user.specBuff ?? "";
+          m.combatBuff = result.user.combatBuff ?? "";
           broadcast(io, room);
           // Refresh the buff preview if this member is in a forming decision match.
           if (room.decision && room.decision.phase !== "duel") broadcastDecision(io, room);
@@ -1809,14 +1870,31 @@ io.on("connection", (socket: Socket) => {
     const cur = parryLevel.get(qKey) ?? 0;
     let nextLevel = cur;
     if (escalate) {
-      // 방벽: a team's absorb charges negate difficulty rises on its fighters.
       const d = room.decision;
-      const side = d?.duel ? duelSideOf(d, aid) : null;
-      if (side && d!.duel!.bulwarkLeft[side] > 0) {
-        d!.duel!.bulwarkLeft[side] -= 1; // absorbed — level holds
-      } else {
-        nextLevel = Math.min(MAX_PARRY_LEVEL, cur + 1);
+      const du = d?.duel;
+      const side = du ? duelSideOf(d!, aid) : null;
+      let delta = 1; // base +1 difficulty rise
+      if (side && du) {
+        const g = du.buffs[side].gamble;
+        // 도박: each gambler flips ±1 on the rise (can shrink it or blow it up).
+        for (let i = 0; i < g; i++) delta += Math.random() < 0.5 ? 1 : -1;
+        // 방어: a charge absorbs a net rise entirely (level holds).
+        const event =
+          delta > 0 && du.bulwarkLeft[side] > 0
+            ? ("absorb" as const)
+            : g > 0
+              ? ("gamble" as const)
+              : null;
+        if (event === "absorb") {
+          du.bulwarkLeft[side] -= 1;
+          du.feed.push({ kind: "absorb", side, name: attacker.name, amount: delta, ts: Date.now() });
+          delta = 0;
+        } else if (event === "gamble") {
+          du.feed.push({ kind: "gamble", side, name: attacker.name, amount: delta, ts: Date.now() });
+        }
+        if (du.feed.length > 8) du.feed.shift();
       }
+      nextLevel = Math.max(0, Math.min(MAX_PARRY_LEVEL, cur + delta));
     }
     parryLevel.set(qKey, nextLevel);
     for (const [sid, m] of room.members) {
@@ -1930,6 +2008,13 @@ io.on("connection", (socket: Socket) => {
     if (!room) return;
     const s: DecisionSide = side === "con" ? "con" : "pro";
     const r: DecisionRole = role === "spectator" ? "spectator" : "fighter";
+    if (r === "fighter") {
+      const until = room.duelBans.get(authedUser.id);
+      if (until && until > Date.now()) {
+        hint(`결투가 금지되어 있어요. 관전은 가능해요. (${leftLabel(until)} 남음)`);
+        return;
+      }
+    }
     joinDecision(io, room, authedUser.id, s, r);
   });
 
@@ -1959,7 +2044,7 @@ io.on("connection", (socket: Socket) => {
     }
     const secs = Math.max(10, Math.min(7 * 24 * 3600, Math.floor(Number(seconds))));
     if (!Number.isFinite(secs)) return;
-    room.tierLocks.set(id, { tierId, until: Date.now() + secs * 1000, reason: "admin" });
+    room.tierLocks.set(id, { tierId, until: Date.now() + secs * 1000, dur: secs * 1000, reason: "admin" });
     const dur = secs >= 3600 ? `${Math.round(secs / 3600)}시간` : secs >= 60 ? `${Math.round(secs / 60)}분` : `${secs}초`;
     pushMessage(
       room,
@@ -2048,9 +2133,11 @@ io.on("connection", (socket: Socket) => {
         mutes: new Map(),
         placeBans: new Map(),
         voteBans: new Map(),
+        duelBans: new Map(),
         muteDur: new Map(),
         placeBanDur: new Map(),
         voteBanDur: new Map(),
+        duelBanDur: new Map(),
         vote: null,
         voteTimer: null,
         voteOptOut: new Set(),
@@ -2143,6 +2230,11 @@ io.on("connection", (socket: Socket) => {
         hint("자기 자신과는 연습할 수 없어요.");
         return;
       }
+      const duelBanUntil = room.duelBans.get(authedUser.id);
+      if (duelBanUntil && duelBanUntil > Date.now()) {
+        hint(`결투가 금지되어 있어요. (${leftLabel(duelBanUntil)} 남음)`);
+        return;
+      }
       const tgt = [...room.members.values()].find((m) => m.userId === tid);
       const now = Date.now();
       // Cooldown is per (attacker → this target): you can't re-hit the same
@@ -2210,7 +2302,7 @@ io.on("connection", (socket: Socket) => {
     const durationLabel = secs % 60 === 0 ? `${secs / 60}분` : `${secs}초`;
 
     // Announce an applied timed ban to everyone as a center-top game effect.
-    const announceBan = (banAction: "mute" | "banPlace" | "banVote") => {
+    const announceBan = (banAction: "mute" | "banPlace" | "banVote" | "banDuel") => {
       if (secs <= 0) return;
       io.to(room.id).emit("room:moderation", {
         action: banAction,
@@ -2273,6 +2365,21 @@ io.on("connection", (socket: Socket) => {
         room.voteBanDur.set(targetUserId, durationMs);
         pushMessage(room, message("system", `${targetName} 님을 ${durationLabel}간 투표 금지했습니다.`, "system"));
         announceBan("banVote");
+      }
+      broadcast(io, room);
+      return;
+    }
+
+    if (action === "banDuel") {
+      if (secs === 0) {
+        room.duelBans.delete(targetUserId);
+        room.duelBanDur.delete(targetUserId);
+        pushMessage(room, message("system", `${targetName} 님의 결투 금지를 해제했습니다.`, "system"));
+      } else {
+        room.duelBans.set(targetUserId, Date.now() + durationMs);
+        room.duelBanDur.set(targetUserId, durationMs);
+        pushMessage(room, message("system", `${targetName} 님을 ${durationLabel}간 결투 금지했습니다.`, "system"));
+        announceBan("banDuel");
       }
       broadcast(io, room);
       return;

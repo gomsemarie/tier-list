@@ -5,6 +5,7 @@ type BanWarningFrameProps = {
   mutedUntil?: number;
   placeBannedUntil?: number;
   voteBannedUntil?: number;
+  duelBannedUntil?: number;
 };
 
 function leftLabel(until: number, now: number): string {
@@ -19,6 +20,7 @@ export function BanWarningFrame({
   mutedUntil,
   placeBannedUntil,
   voteBannedUntil,
+  duelBannedUntil,
 }: BanWarningFrameProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -30,6 +32,7 @@ export function BanWarningFrame({
     { label: "채팅이 금지되었습니다", until: mutedUntil },
     { label: "배치가 금지되었습니다", until: placeBannedUntil },
     { label: "투표가 금지되었습니다", until: voteBannedUntil },
+    { label: "결투가 금지되었습니다", until: duelBannedUntil },
   ].filter((b): b is { label: string; until: number } => !!b.until && b.until > now);
 
   if (bans.length === 0) return null;

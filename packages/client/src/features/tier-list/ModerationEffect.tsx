@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Ban, Gavel, MessageSquareOff } from "lucide-react";
+import { Ban, Gavel, MessageSquareOff, Swords } from "lucide-react";
 
 import type { ModerationEffect as ModerationEvent } from "@tier-list/shared";
 
@@ -27,6 +27,12 @@ const META = {
     label: "투표 금지",
     grad: "from-violet-500 to-purple-600",
     ring: "rgba(139,92,246,0.6)",
+  },
+  banDuel: {
+    icon: Swords,
+    label: "결투 금지",
+    grad: "from-rose-500 to-red-600",
+    ring: "rgba(248,113,113,0.6)",
   },
 } as const;
 

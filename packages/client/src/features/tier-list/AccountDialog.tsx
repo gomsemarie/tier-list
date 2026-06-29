@@ -1,22 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { Ban, Camera, Heart, Shield, X, Zap, type LucideIcon } from "lucide-react";
+import { Ban, Camera, Dices, Heart, Shield, X, Zap, type LucideIcon } from "lucide-react";
 
-import { FRAMES, PERKS, RARITY_META, SC_STYLES, SPEC_BUFFS } from "@tier-list/shared";
+import { COMBAT_BUFFS, FRAMES, PERKS, RARITY_META, SC_STYLES, SPEC_BUFFS } from "@tier-list/shared";
 
-/** Lucide icon per spectator-buff id (and "" → none). */
-const SPEC_BUFF_ICON: Record<string, LucideIcon> = {
+/** Lucide icon per buff id (and "" → none). */
+const BUFF_ICON: Record<string, LucideIcon> = {
   "": Ban,
   bulwark: Shield,
-  vigor: Heart,
   surge: Zap,
+  gamble: Dices,
+  life: Heart,
 };
 import type { AuthUser, CodeInfo, IssueCodeResult, RedeemResult, UpdateResult } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type AccountDialogProps = {
   user: AuthUser;
   onUpdateProfile: (patch: { nickname?: string; avatar?: string }) => Promise<UpdateResult>;
-  onEquip: (patch: { frame?: string; scStyle?: string; specBuff?: string }) => Promise<UpdateResult>;
+  onEquip: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => Promise<UpdateResult>;
   onRedeem: (code: string) => Promise<RedeemResult>;
   onIssueCode: (perks: string[]) => Promise<IssueCodeResult>;
   onFetchCodes: () => Promise<CodeInfo[]>;
@@ -219,27 +221,55 @@ export function AccountDialog({
           </div>
 
           <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 관전 버프 (결정전)</label>
-          <div className="mb-4 flex flex-col gap-2">
+          <div className="mb-4 flex flex-wrap gap-1.5">
             {[{ id: "", name: "없음", desc: "관전 시 팀에 버프를 주지 않습니다" }, ...SPEC_BUFFS].map((b) => {
               const equipped = (user.specBuff ?? "") === b.id;
-              const Icon = SPEC_BUFF_ICON[b.id] ?? Ban;
+              const Icon = BUFF_ICON[b.id] ?? Ban;
               return (
-                <button
-                  key={b.id || "none"}
-                  type="button"
-                  onClick={() => onEquip({ specBuff: b.id })}
-                  className="flex items-center gap-2.5 rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-2.5 py-2 text-left"
-                  style={equipped ? { boxShadow: "0 0 0 2px #6366F1" } : undefined}
-                >
-                  <Icon className="size-[18px] shrink-0 text-[#A9AEF5]" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-bold text-white">{b.name}</span>
-                    <span className="block text-[11px] text-[#8A8F9C]">{b.desc}</span>
-                  </span>
-                  {equipped && (
-                    <span className="shrink-0 rounded-[5px] bg-[#6366F1] px-2 py-[3px] text-[11px] font-bold text-white">장착중</span>
-                  )}
-                </button>
+                <Tooltip key={b.id || "none"}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => onEquip({ specBuff: b.id })}
+                      className="flex min-w-[58px] flex-1 flex-col items-center gap-1 rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-1 py-2"
+                      style={equipped ? { boxShadow: "0 0 0 2px #6366F1" } : undefined}
+                    >
+                      <Icon className="size-[18px] text-[#A9AEF5]" />
+                      <span className="w-full truncate text-center text-[11px] font-bold text-white">{b.name}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <div className="font-bold text-white">{b.name}</div>
+                    <div className="text-[#9AA0AD]">{b.desc}</div>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+
+          <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 전투 버프 (결정전 결투)</label>
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            {[{ id: "", name: "없음", desc: "결투 시 팀에 버프를 주지 않습니다" }, ...COMBAT_BUFFS].map((b) => {
+              const equipped = (user.combatBuff ?? "") === b.id;
+              const Icon = BUFF_ICON[b.id] ?? Ban;
+              return (
+                <Tooltip key={b.id || "none"}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => onEquip({ combatBuff: b.id })}
+                      className="flex min-w-[58px] flex-1 flex-col items-center gap-1 rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-1 py-2"
+                      style={equipped ? { boxShadow: "0 0 0 2px #6366F1" } : undefined}
+                    >
+                      <Icon className="size-[18px] text-[#F5B942]" />
+                      <span className="w-full truncate text-center text-[11px] font-bold text-white">{b.name}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <div className="font-bold text-white">{b.name}</div>
+                    <div className="text-[#9AA0AD]">{b.desc}</div>
+                  </TooltipContent>
+                </Tooltip>
               );
             })}
           </div>

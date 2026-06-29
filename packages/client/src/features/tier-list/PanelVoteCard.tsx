@@ -43,7 +43,7 @@ export function PanelVoteCard({ vote, onCast, canVote = true }: PanelVoteCardPro
             : "현재 티어 유지";
     return (
       <div
-        className="mx-3 mt-3 overflow-hidden rounded-[2px] bg-[#0E1117]"
+        className="shrink-0 overflow-hidden rounded-[2px] bg-[#0E1117]"
         style={{ border: "2px solid #2A3142", boxShadow: "3px 3px 0 rgba(0,0,0,.5)" }}
       >
         <div className="flex items-center gap-2 border-b-2 border-[#1B1F27] bg-[#11141B] px-[11px] py-2">
@@ -67,7 +67,7 @@ export function PanelVoteCard({ vote, onCast, canVote = true }: PanelVoteCardPro
 
   return (
     <div
-      className="mx-3 mt-3 overflow-hidden rounded-[2px] bg-[#0E1117]"
+      className="shrink-0 overflow-hidden rounded-[2px] bg-[#0E1117]"
       style={{ border: "2px solid #2A3142", boxShadow: "3px 3px 0 rgba(0,0,0,.5)" }}
     >
       <div className="flex items-center gap-[7px] border-b-2 border-[#1B1F27] bg-[#11141B] px-[11px] py-2">

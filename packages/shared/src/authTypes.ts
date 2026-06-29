@@ -14,6 +14,8 @@ export type AuthUser = {
   scStyle?: string;
   /** Spectator buff contributed to one's team in a 결정전 ("" = none). */
   specBuff?: string;
+  /** Combat buff a fighter brings into a 결정전 ("" = none). */
+  combatBuff?: string;
 };
 
 /** Public-facing user info shown in the profile overlay (no private data). */

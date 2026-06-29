@@ -19,8 +19,8 @@ type TierRowProps = {
   canDelete: boolean;
   matchedIds?: Set<string> | null;
   votingItemId?: string;
-  /** Item ids pinned by a won decision match (🔒 highlight). */
-  lockedIds?: Set<string>;
+  /** Active tier locks by item id (🔒 countdown badge). */
+  locks?: Record<string, { label: string; until: number; dur: number }>;
   selectedItemId?: string | null;
   dndEnabled?: boolean;
   onSelectItem?: (item: Item, rect: DOMRect) => void;
@@ -36,7 +36,7 @@ export function TierRow({
   canDelete,
   matchedIds,
   votingItemId,
-  lockedIds,
+  locks,
   selectedItemId,
   dndEnabled = true,
   onSelectItem,
@@ -177,7 +177,7 @@ export function TierRow({
             highlight={matchedIds ? matchedIds.has(item.id) : undefined}
             dim={matchedIds ? !matchedIds.has(item.id) : undefined}
             voting={votingItemId === item.id}
-            locked={lockedIds?.has(item.id)}
+            lock={locks?.[item.id]}
             selected={selectedItemId === item.id}
             dndEnabled={dndEnabled}
             onSelect={onSelectItem}

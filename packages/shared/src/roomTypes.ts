@@ -39,14 +39,16 @@ export type Member = {
   role?: MemberRole;
   /** Equipped avatar frame id (perk), shown on the member's avatar. */
   frame?: string;
-  /** Epoch ms until which this member is chat-muted / placement-banned / vote-banned. */
+  /** Epoch ms until which this member is chat-muted / placement-banned / vote-banned / duel-banned. */
   mutedUntil?: number;
   placeBannedUntil?: number;
   voteBannedUntil?: number;
+  duelBannedUntil?: number;
   /** Original duration (ms) of each active ban, for the depleting timer ring. */
   mutedFor?: number;
   placeBannedFor?: number;
   voteBannedFor?: number;
+  duelBannedFor?: number;
 };
 
 export type ModerateActionType =
@@ -54,13 +56,14 @@ export type ModerateActionType =
   | "mute"
   | "banPlace"
   | "banVote"
+  | "banDuel"
   | "clearChat"
   | "attack";
 
 /** Broadcast to every room member when a timed ban is applied — drives the
  *  center-top game effect (not a toast). */
 export type ModerationEffect = {
-  action: "mute" | "banPlace" | "banVote";
+  action: "mute" | "banPlace" | "banVote" | "banDuel";
   targetName: string;
   by: string;
   /** Human-readable duration, formatted server-side (e.g. "30초", "10분"). */
@@ -100,7 +103,7 @@ export type RoomSnapshot = {
    *  drives the board's 🔒 highlight and blocks D&D/vote/re-propose until `until`. */
   locks?: Record<
     string,
-    { tierId: string; label: string; color: string; until: number; reason: "decision" | "vote" | "admin" }
+    { tierId: string; label: string; color: string; until: number; dur: number; reason: "decision" | "vote" | "admin" }
   >;
 };
 
@@ -199,13 +202,16 @@ export type DecisionRoster = { fighters: DuelParticipant[]; spectators: DuelPart
 
 /** Pooled spectator buffs for one side (from spectators' equipped specBuff). */
 export type DecisionBuffs = {
-  /** 방벽: difficulty-up absorb charges granted / remaining. */
+  /** 방어: difficulty-up absorb charges granted / remaining. */
   bulwark: number;
   bulwarkLeft: number;
-  /** 응원: own-fighter starting-difficulty reduction. */
-  vigor: number;
-  /** 각성: opposing-fighter starting-difficulty increase. */
+  /** 공격: opposing-fighter starting-difficulty increase. */
   surge: number;
+  /** 도박: per spectator, each own difficulty rise flips ±1 (summed). */
+  gamble: number;
+  /** 목숨: extra team lives (granted / remaining) from 결투 buff. */
+  life: number;
+  lifeLeft: number;
 };
 
 /** Live state of a decision match, broadcast to every room member (room:decision). */
@@ -234,6 +240,10 @@ export type DecisionSnapshot = {
   /** Live NvN duel: simultaneous matchups + per-side survivor counts. */
   duel?: {
     pairs: { pro: DuelParticipant; con: DuelParticipant; proLevel: number; conLevel: number }[];
+    /** Decided matchups (KOs), newest last — for showing defeated duels. */
+    results: { winner: DuelParticipant; loser: DuelParticipant; winnerSide: DecisionSide }[];
+    /** Recent buff firings (방어 absorb / 도박 roll / 목숨 revive) for the live ticker. */
+    feed: { kind: "absorb" | "gamble" | "life"; side: DecisionSide; name: string; amount: number; ts: number }[];
     proAlive: number;
     conAlive: number;
     proTotal: number;

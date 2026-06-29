@@ -195,7 +195,7 @@ export function TierListPage() {
       : topSet
     : searchSet;
 
-  const lockedIds = new Set(Object.keys(room.room?.locks ?? {}));
+  const locks = room.room?.locks ?? {};
 
   const total = Object.keys(state.items).length;
   const ranked = total - itemsOf(POOL_ID).length;
@@ -464,7 +464,7 @@ export function TierListPage() {
                 items={itemsOf(tier.id)}
                 canDelete={state.tiers.length > 1}
                 matchedIds={matchedIds}
-                lockedIds={lockedIds}
+                locks={locks}
                 selectedItemId={menu?.item.id ?? null}
                 dndEnabled={!sortAZ}
                 onSelectItem={(item, anchor) => setMenu({ item, anchor })}
@@ -746,6 +746,7 @@ export function TierListPage() {
             mutedUntil={me.mutedUntil}
             placeBannedUntil={me.placeBannedUntil}
             voteBannedUntil={me.voteBannedUntil}
+            duelBannedUntil={me.duelBannedUntil}
           />
         ) : null;
       })()}

@@ -25,11 +25,53 @@ type ItemCardProps = {
   highlight?: boolean;
   dim?: boolean;
   voting?: boolean;
-  /** Pinned to this tier by a won decision match — glow ring + 🔒 badge. */
-  locked?: boolean;
+  /** Pinned to this tier (decision/vote/admin) — glow ring + countdown badge. */
+  lock?: { label: string; until: number; dur: number };
   selected?: boolean;
   dndEnabled?: boolean;
 };
+
+const LR = 7;
+const LC = 2 * Math.PI * LR;
+
+/** Tier-lock countdown badge: depleting ring + remaining time; exact end on hover. */
+function LockTimer({ lock }: { lock: { label: string; until: number; dur: number } }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const left = Math.max(0, lock.until - now);
+  const frac = lock.dur > 0 ? Math.max(0, Math.min(1, left / lock.dur)) : 1;
+  const secs = Math.ceil(left / 1000);
+  const label = secs >= 3600 ? `${Math.ceil(secs / 3600)}시간` : secs >= 60 ? `${Math.ceil(secs / 60)}분` : `${secs}초`;
+  const end = new Date(lock.until).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return (
+    <span
+      className="absolute top-[3px] right-[3px] flex items-center gap-[3px] rounded-full bg-black/75 py-[1px] pr-1.5 pl-[1px]"
+      title={`${lock.label} 티어 고정 · ${end} 종료`}
+    >
+      <span className="relative grid size-4 place-items-center">
+        <svg viewBox="0 0 16 16" className="absolute inset-0 size-full -rotate-90">
+          <circle cx="8" cy="8" r={LR} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="2" />
+          <circle
+            cx="8"
+            cy="8"
+            r={LR}
+            fill="none"
+            stroke="#A5B4FC"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeDasharray={LC}
+            strokeDashoffset={LC * (1 - frac)}
+          />
+        </svg>
+        <Lock className="size-[8px] text-[#A5B4FC]" strokeWidth={2.6} />
+      </span>
+      <span className="text-[8px] leading-none font-extrabold text-white">{label}</span>
+    </span>
+  );
+}
 
 /** 66px tier item — image or hue-initials, name gradient, live/selected states. */
 export function ItemCard({
@@ -39,7 +81,7 @@ export function ItemCard({
   highlight,
   dim,
   voting,
-  locked,
+  lock,
   selected,
   dndEnabled = true,
 }: ItemCardProps) {
@@ -128,12 +170,10 @@ export function ItemCard({
             </span>
           </>
         )}
-        {locked && (
+        {lock && (
           <>
             <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#818CF8_inset,0_0_12px_rgba(129,140,248,.6)]" />
-            <span className="absolute top-[3px] right-[3px] grid size-[15px] place-items-center rounded-[3px] bg-[#6366F1] text-white">
-              <Lock className="size-2.5" strokeWidth={2.5} />
-            </span>
+            <LockTimer lock={lock} />
           </>
         )}
         {selected && (

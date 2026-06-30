@@ -34,7 +34,7 @@ import type {
   DecisionRole,
   DuelParticipant,
 } from "@tier-list/shared";
-import type { Item, Tier, TierListState } from "@tier-list/shared";
+import type { Item, Tier, TierListState, DuelGameMode } from "@tier-list/shared";
 
 import {
   createSession,
@@ -121,6 +121,8 @@ type DecisionState = {
   endsAt: number;
   durationMs: number;
   fromTier: string | null;
+  /** Parry mini-game chosen by the proposer for this whole match. */
+  duelMode: DuelGameMode;
   /** userId rosters; a user is in at most one bucket. */
   pro: { fighters: Set<string>; spectators: Set<string> };
   con: { fighters: Set<string>; spectators: Set<string> };
@@ -196,6 +198,11 @@ const attackCooldownPair = new Map<string, number>(); // `${roomId}:${attacker}:
 // Per-person parry difficulty: how many inner-reflects the *opponent* landed on
 // this player in the current rally. Keyed `${roomId}:${pairKey}:${victimId}`.
 const parryLevel = new Map<string, number>();
+// Parry mini-game for the current exchange of a pair, keyed `${roomId}:${pairKey}`.
+// Picked when a pairing/attack begins, reused on every re-emit so both players
+// (and the rally) stay on the same game until someone misses.
+const exchangeMode = new Map<string, DuelGameMode>();
+const pickDuelMode = (): DuelGameMode => (Math.random() < 0.5 ? "combo" : "timing");
 
 // 티어 결정전 (decision match) timings.
 const DECISION_SIGNUP_MS = 10_000; // recruit window
@@ -1006,6 +1013,7 @@ function proposeDecision(
   targetTierId: string,
   proposerId: string,
   proposerName: string,
+  duelMode: DuelGameMode,
 ): string | null {
   if (room.decision) return "이미 진행 중인 결정전이 있어요.";
   const memberCount = new Set([...room.members.values()].map((m) => m.userId).filter(Boolean)).size;
@@ -1029,6 +1037,7 @@ function proposeDecision(
     endsAt: Date.now() + DECISION_SIGNUP_MS,
     durationMs: DECISION_SIGNUP_MS,
     fromTier: from,
+    duelMode,
     pro: { fighters: new Set([proposerId]), spectators: new Set() },
     con: { fighters: new Set(), spectators: new Set() },
   };
@@ -1215,6 +1224,8 @@ function rematchDuel(io: Server, room: Room) {
     du.debt.delete(proId);
     du.debt.delete(conId);
     du.pairs.push({ proId, conId, pk });
+    const mode = d.duelMode; // the proposer's chosen game for this match
+    exchangeMode.set(`${room.id}:${pk}`, mode);
     // Challenger (pro) opens; defender (con) gets the parry prompt.
     const proName = memberInfo(room, proId).name;
     for (const [sid, m] of room.members) {
@@ -1223,6 +1234,7 @@ function rematchDuel(io: Server, room: Room) {
           by: proName,
           byUserId: proId,
           parryable: true,
+          mode,
           level: parryLevel.get(`${room.id}:${pk}:${conId}`) ?? 0,
         });
     }
@@ -1244,6 +1256,7 @@ function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
   const winnerStack = parryLevel.get(`${room.id}:${pk}:${winnerId}`) ?? 0;
   parryLevel.delete(`${room.id}:${pk}:${pair.proId}`);
   parryLevel.delete(`${room.id}:${pk}:${pair.conId}`);
+  exchangeMode.delete(`${room.id}:${pk}`); // re-pairing picks a fresh game
 
   // The winner keeps their built-up difficulty when the pair dissolves — it must
   // never reset to 0 just because the matchup ended (carried via debt → next pair).
@@ -2005,12 +2018,14 @@ io.on("connection", (socket: Socket) => {
       nextLevel = Math.max(0, Math.min(MAX_PARRY_LEVEL, cur + delta));
     }
     parryLevel.set(qKey, nextLevel);
+    const relayMode = exchangeMode.get(`${room.id}:${pk}`) ?? "timing";
     for (const [sid, m] of room.members) {
       if (m.userId === aid)
         io.to(sid).emit("room:attacked", {
           by: name,
           byUserId: authedUser.id,
           parryable: true, // the rally continues — they can parry back
+          mode: relayMode,
           level: nextLevel,
         });
     }
@@ -2054,6 +2069,7 @@ io.on("connection", (socket: Socket) => {
       existing.rally = { ...existing.rally, ended: true, winner: winner?.name ?? "?" };
     }
     room.rallies.delete(pk);
+    exchangeMode.delete(`${room.id}:${pk}`);
     parryLevel.delete(`${room.id}:${pk}:${authedUser.id}`);
     parryLevel.delete(`${room.id}:${pk}:${aid}`);
     attackCooldownPair.delete(`${room.id}:${aid}:${authedUser.id}`); // let a rematch start at once
@@ -2102,11 +2118,12 @@ io.on("connection", (socket: Socket) => {
   });
 
   // --- 티어 결정전 ---------------------------------------------------------
-  socket.on("decision:propose", ({ itemId, tierId }: { itemId?: string; tierId?: string }) => {
+  socket.on("decision:propose", ({ itemId, tierId, mode }: { itemId?: string; tierId?: string; mode?: string }) => {
     if (!currentRoom || !authedUser) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
-    const err = proposeDecision(io, room, String(itemId ?? ""), String(tierId ?? ""), authedUser.id, name);
+    const duelMode: DuelGameMode = mode === "combo" ? "combo" : "timing";
+    const err = proposeDecision(io, room, String(itemId ?? ""), String(tierId ?? ""), authedUser.id, name, duelMode);
     if (err) hint(err);
   });
 
@@ -2372,12 +2389,15 @@ io.on("connection", (socket: Socket) => {
       const pk = pairKey(authedUser.id, tid);
       parryLevel.set(`${room.id}:${pk}:${authedUser.id}`, 0);
       parryLevel.set(`${room.id}:${pk}:${tid}`, 0);
+      const mode = pickDuelMode();
+      exchangeMode.set(`${room.id}:${pk}`, mode);
       for (const [sid, m] of room.members) {
         if (m.userId === tid)
           io.to(sid).emit("room:attacked", {
             by: name,
             byUserId: authedUser.id,
             parryable: true,
+            mode,
             level: 0,
           });
       }

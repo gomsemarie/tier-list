@@ -21,6 +21,7 @@ import type {
   DecisionSnapshot,
   DecisionSide,
   DecisionRole,
+  DuelGameMode,
 } from "@tier-list/shared";
 
 // By default we connect to the *same origin* the page was served from and let
@@ -70,7 +71,7 @@ export type RoomConnection = {
   activeVote: VoteSnapshot | null;
   /** In-progress tier decision match (signup → duel → result), or null. */
   activeDecision: DecisionSnapshot | null;
-  proposeDecision: (itemId: string, tierId: string) => void;
+  proposeDecision: (itemId: string, tierId: string, mode: DuelGameMode) => void;
   joinDecision: (side: DecisionSide, role: DecisionRole) => void;
   leaveDecision: () => void;
   /** Owner/admin pins a placed item to its tier for `seconds`. */
@@ -78,7 +79,7 @@ export type RoomConnection = {
   /** Owner/admin lifts a tier lock early. */
   unlockTier: (itemId: string) => void;
   /** Set briefly when this client is attacked by an admin (drives the hit effect). */
-  attack: { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null;
+  attack: { by: string; byUserId?: string; parryable: boolean; level?: number; mode?: DuelGameMode; at: number } | null;
   clearAttack: () => void;
   /** The attacked user reflects the attack back to its sender. */
   parryAttack: (attackerId: string, escalate: boolean) => void;
@@ -172,7 +173,7 @@ export function useRoom(): RoomConnection {
   const [activeVote, setActiveVote] = useState<VoteSnapshot | null>(null);
   const [activeDecision, setActiveDecision] = useState<DecisionSnapshot | null>(null);
   const [attack, setAttack] = useState<
-    { by: string; byUserId?: string; parryable: boolean; level?: number; at: number } | null
+    { by: string; byUserId?: string; parryable: boolean; level?: number; mode?: DuelGameMode; at: number } | null
   >(null);
   const [moderation, setModeration] = useState<
     (ModerationEffect & { at: number }) | null
@@ -265,7 +266,7 @@ export function useRoom(): RoomConnection {
       (
         payload:
           | string
-          | { by?: string; byUserId?: string; parryable?: boolean; level?: number },
+          | { by?: string; byUserId?: string; parryable?: boolean; level?: number; mode?: DuelGameMode },
       ) => {
         if (typeof payload === "string") {
           setAttack({ by: payload || "누군가", parryable: false, at: Date.now() });
@@ -275,6 +276,7 @@ export function useRoom(): RoomConnection {
             byUserId: payload?.byUserId,
             parryable: !!payload?.parryable,
             level: payload?.level ?? 0,
+            mode: payload?.mode,
             at: Date.now(),
           });
         }
@@ -497,8 +499,8 @@ export function useRoom(): RoomConnection {
     socketRef.current?.emit("vote:cast", { tierId });
   }, []);
 
-  const proposeDecision = useCallback((itemId: string, tierId: string) => {
-    socketRef.current?.emit("decision:propose", { itemId, tierId });
+  const proposeDecision = useCallback((itemId: string, tierId: string, mode: DuelGameMode) => {
+    socketRef.current?.emit("decision:propose", { itemId, tierId, mode });
   }, []);
   const joinDecision = useCallback((side: DecisionSide, role: DecisionRole) => {
     socketRef.current?.emit("decision:join", { side, role });

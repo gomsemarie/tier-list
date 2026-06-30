@@ -1,5 +1,9 @@
 import type { TierListState } from "./types";
 
+/** Which parry mini-game resolves an attack exchange: the classic timing bar,
+ *  or the Phaser arrow-combo rush. Chosen server-side per pair. */
+export type DuelGameMode = "timing" | "combo";
+
 export type ChatKind = "user" | "system" | "action" | "announce" | "super";
 
 export type ChatMessage = {

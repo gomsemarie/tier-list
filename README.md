@@ -42,21 +42,30 @@ packages/
 
 ## 🚀 시작하기
 
-요구사항: Node.js 20+, pnpm 10+
+요구사항: **Node.js 20+**, **pnpm 10+** (`npm i -g pnpm`로 설치)
 
 ```bash
+# 1. 소스 받기
+git clone https://github.com/gomsemarie/tier-list.git
+cd tier-list
+
+# 2. 의존성 설치
 pnpm install
 
-# 환경변수 준비 (선택)
+# 3. 환경변수 준비 (선택 — 없어도 동작합니다)
 cp packages/server/.env.example packages/server/.env
 cp packages/client/.env.example packages/client/.env.local
 
-# 클라이언트 + 서버 동시 실행
+# 4. 클라이언트 + 서버 동시 실행
 pnpm dev:all
 ```
 
 - 웹: http://localhost:5810
 - 실시간 서버: http://localhost:5811 (Vite가 `/socket.io`를 프록시하므로 5810만 열어도 됩니다)
+
+> 환경변수 없이 바로 `pnpm dev:all`만 해도 실행됩니다. 네이버 이미지 검색을 쓰려면
+> 아래 **"네이버 이미지 검색 설정"** 섹션을, 관리자 계정이 필요하면 **"환경변수"** 의
+> `ADMIN_USERNAMES`를 참고하세요.
 
 ### 개별 실행
 
@@ -107,6 +116,40 @@ URL이 곧 "지금 어떤 방에 있는지"의 출처입니다.
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 네이버 이미지 검색용. 미설정 시 위키백과 → Openverse로 폴백. **브라우저에 번들되지 않음**(`VITE_` 접두사 없음) |
 | `VITE_PORT` | 클라이언트 포트 (기본 5810) |
 | `VITE_SERVER_URL` | 클라이언트가 접속할 실시간 서버 URL (기본 `http://localhost:5811`) |
+
+## 🖼️ 네이버 이미지 검색 설정 (선택)
+
+대상 추가 시 이미지 후보를 띄울 때 **네이버 이미지 검색**을 1순위로 씁니다(특히 과자·라면 등
+한국 상품에 강함). **설정하지 않아도** 위키백과 → Openverse 폴백으로 동작하므로 필수는 아닙니다.
+
+> 🔐 키는 **서버 측에서만** 사용됩니다(개발 시 Vite 미들웨어 `/api/naver-image`). `VITE_`
+> 접두사가 없어 **브라우저 번들에 포함되지 않습니다**. `.env.local`은 git에 커밋되지 않습니다.
+
+### 1) 키 발급
+
+1. [네이버 개발자 센터](https://developers.naver.com/apps) 접속 → **Application → 애플리케이션 등록**.
+2. 사용 API에서 **검색(Search)** 을 추가합니다.
+3. 환경(WEB 등)을 적당히 지정하고 등록하면 **Client ID** 와 **Client Secret** 이 발급됩니다.
+
+### 2) 키 적용
+
+`packages/client/.env.local` 파일에 값을 채웁니다. (없으면 `.env.example`을 복사)
+
+```bash
+cp packages/client/.env.example packages/client/.env.local
+```
+
+```ini
+# packages/client/.env.local
+NAVER_CLIENT_ID=발급받은_클라이언트_ID
+NAVER_CLIENT_SECRET=발급받은_클라이언트_시크릿
+```
+
+저장 후 **개발 서버를 재시작**합니다(`pnpm dev` 또는 `pnpm dev:all`). 이제 이미지 검색이
+네이버 결과를 우선 사용합니다.
+
+> 키가 없거나 잘못되면 자동으로 위키백과 → Openverse 폴백으로 넘어가므로, 검색 자체는
+> 항상 동작합니다. 네이버 API는 일일 호출 한도가 있어, 초과 시에도 폴백됩니다.
 
 ## 🗄️ 데이터 영속화
 

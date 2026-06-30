@@ -6,22 +6,25 @@ import {
   ArrowDownAZ,
   ChevronDown,
   ChevronUp,
+  Gamepad2,
   LogOut,
   Palette,
   Plus,
   RotateCcw,
   Search as SearchIcon,
+  Target,
   Trophy,
   UserCog,
   Users,
 } from "lucide-react";
 
 import { POOL_ID, TIER_COLORS } from "@tier-list/shared";
-import type { Item, Member } from "@tier-list/shared";
+import type { DuelGameMode, Item, Member } from "@tier-list/shared";
 import { checkDuplicate } from "@/lib/similarity";
 import { isCardData, isListData } from "./dnd";
 import { AccountDialog } from "./AccountDialog";
 import { AttackEffect, type AttackItem } from "./AttackEffect";
+import { ComboRushEffect } from "./ComboRushEffect";
 import { AuthDialog } from "./AuthDialog";
 import { Avatar } from "./Avatar";
 import { BanWarningFrame } from "./BanWarningFrame";
@@ -72,6 +75,30 @@ export function TierListPage() {
   const [voteFor, setVoteFor] = useState<Item | null>(null);
   const [acct, setAcct] = useState(false);
   const [account, setAccount] = useState(false);
+  // Admin solo practice: an imaginary opponent that always escalates, so the
+  // difficulty climbs by 1 every successful parry until you miss.
+  const [solo, setSolo] = useState<{ mode: DuelGameMode; level: number; key: number } | null>(null);
+  const [soloEnd, setSoloEnd] = useState<{ mode: DuelGameMode; level: number } | null>(null);
+  const [soloNote, setSoloNote] = useState<string | null>(null);
+  const soloParried = useRef(false);
+  const soloLives = useRef(0); // 목숨(life): 미스를 버틸 수 있는 횟수
+  const soloAbsorb = useRef(0); // 방어(bulwark): 난이도 상승을 흡수하는 횟수
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flashSoloNote = (t: string) => {
+    setSoloNote(t);
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setSoloNote(null), 1200);
+  };
+  const startSolo = (mode: DuelGameMode) => {
+    // 내 장착 전투 스킬을 솔로 연습에도 반영(half는 renderDuel의 perStack로 적용됨).
+    const buff = room.authUser?.combatBuff;
+    soloParried.current = false;
+    soloLives.current = buff === "life" ? 1 : 0;
+    soloAbsorb.current = buff === "bulwark" ? 1 : 0;
+    setSoloNote(null);
+    setSoloEnd(null);
+    setSolo({ mode, level: 0, key: Date.now() });
+  };
   const [memberView, setMemberView] = useState<Member | null>(null);
   const [attackCd, setAttackCd] = useState<Record<string, number>>({});
   const [promo, setPromo] = useState<{
@@ -271,6 +298,49 @@ export function TierListPage() {
   const total = Object.keys(state.items).length;
   const ranked = total - itemsOf(POOL_ID).length;
 
+  // Render the right parry mini-game for a duel exchange (real or solo practice).
+  const renderDuel = (o: {
+    mode?: DuelGameMode;
+    keyId: number;
+    by: string;
+    parryable: boolean;
+    level?: number;
+    quick?: boolean;
+    onParry: (escalate: boolean) => void;
+    onHit: () => void;
+    onDone: () => void;
+  }) => {
+    const perStack = room.authUser?.combatBuff === "half" ? 0.05 : 0.1;
+    return o.mode === "combo" ? (
+      <ComboRushEffect
+        key={o.keyId}
+        attackKey={o.keyId}
+        by={o.by}
+        parryable={o.parryable}
+        level={o.level}
+        perStack={perStack}
+        quick={o.quick}
+        onParry={o.onParry}
+        onHit={o.onHit}
+        onDone={o.onDone}
+      />
+    ) : (
+      <AttackEffect
+        key={o.keyId}
+        attackKey={o.keyId}
+        by={o.by}
+        parryable={o.parryable}
+        level={o.level}
+        perStack={perStack}
+        quick={o.quick}
+        items={attackItems()}
+        onParry={o.onParry}
+        onHit={o.onHit}
+        onDone={o.onDone}
+      />
+    );
+  };
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       {/* App header */}
@@ -362,6 +432,29 @@ export function TierListPage() {
                   >
                     <UserCog className="size-4" /> 계정 관리
                   </button>
+                  <div className="my-1 border-t border-border" />
+                  <div className="px-3 pt-0.5 pb-1 text-[10px] font-bold tracking-wide text-muted-foreground">혼자 연습</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAcct(false);
+                      startSolo("timing");
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-foreground hover:bg-accent"
+                  >
+                    <Target className="size-4" /> 타이밍 연습
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAcct(false);
+                      startSolo("combo");
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-foreground hover:bg-accent"
+                  >
+                    <Gamepad2 className="size-4" /> 콤보 연습
+                  </button>
+                  <div className="my-1 border-t border-border" />
                   <button
                     type="button"
                     onClick={() => {
@@ -645,8 +738,8 @@ export function TierListPage() {
           }
           onProposeDecision={
             room.room
-              ? (tierId) => {
-                  room.proposeDecision(menu.item.id, tierId);
+              ? (tierId, mode) => {
+                  room.proposeDecision(menu.item.id, tierId, mode);
                   setMenu(null);
                 }
               : undefined
@@ -806,19 +899,91 @@ export function TierListPage() {
           />
         ))}
 
-      {room.attack && (
-        <AttackEffect
-          key={room.attack.at}
-          attackKey={room.attack.at}
-          by={room.attack.by}
-          parryable={room.attack.parryable}
-          level={room.attack.level}
-          perStack={room.authUser?.combatBuff === "half" ? 0.05 : 0.1}
-          items={attackItems()}
-          onParry={(escalate) => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, escalate)}
-          onHit={() => room.attack?.byUserId && room.rallyHit(room.attack.byUserId)}
-          onDone={room.clearAttack}
-        />
+      {room.attack &&
+        renderDuel({
+          mode: room.attack.mode,
+          keyId: room.attack.at,
+          by: room.attack.by,
+          parryable: room.attack.parryable,
+          level: room.attack.level,
+          onParry: (escalate) => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, escalate),
+          onHit: () => room.attack?.byUserId && room.rallyHit(room.attack.byUserId),
+          onDone: room.clearAttack,
+        })}
+
+      {/* Admin solo practice — opponent always escalates: parry → level+1, miss → end. */}
+      {solo &&
+        renderDuel({
+          mode: solo.mode,
+          keyId: solo.key,
+          by: "난이도 봇 (무조건 상승)",
+          parryable: true,
+          level: solo.level,
+          quick: true,
+          onParry: () => {
+            soloParried.current = true;
+          },
+          onHit: () => {
+            soloParried.current = false;
+          },
+          onDone: () => {
+            if (soloParried.current) {
+              soloParried.current = false;
+              if (soloAbsorb.current > 0) {
+                soloAbsorb.current -= 1;
+                flashSoloNote("🛡️ 방어 — 난이도 상승 흡수");
+                setSolo((s) => (s ? { ...s, key: s.key + 1 } : null)); // 레벨 유지
+              } else {
+                setSolo((s) => (s ? { ...s, level: s.level + 1, key: s.key + 1 } : null));
+              }
+            } else if (soloLives.current > 0) {
+              soloLives.current -= 1;
+              flashSoloNote("❤️ 목숨 소모 — 버팀!");
+              setSolo((s) => (s ? { ...s, key: s.key + 1 } : null)); // 같은 레벨로 계속
+            } else {
+              setSoloEnd(solo ? { mode: solo.mode, level: solo.level } : null);
+              setSolo(null);
+            }
+          },
+        })}
+
+      {soloNote && (
+        <div className="fixed top-[14%] left-1/2 z-[97] -translate-x-1/2 rounded-full bg-black/85 px-4 py-1.5 text-[13px] font-bold text-white shadow-[0_6px_20px_rgba(0,0,0,.5)]">
+          {soloNote}
+        </div>
+      )}
+
+      {soloEnd && (
+        <div
+          className="fixed inset-0 z-[96] flex items-center justify-center bg-black/75"
+          onClick={() => setSoloEnd(null)}
+        >
+          <div
+            className="rounded-xl border border-border bg-card px-7 py-6 text-center shadow-[0_24px_64px_rgba(0,0,0,.6)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] font-bold text-muted-foreground">
+              {soloEnd.mode === "combo" ? "콤보 러시" : "타이밍"} 연습 종료
+            </div>
+            <div className="mt-1 text-[30px] font-extrabold text-indigo">Lv {soloEnd.level} 도달</div>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => startSolo(soloEnd.mode)}
+                className="h-9 flex-1 rounded-md bg-indigo px-4 text-[13px] font-bold text-white"
+              >
+                다시
+              </button>
+              <button
+                type="button"
+                onClick={() => setSoloEnd(null)}
+                className="h-9 rounded-md border border-border bg-card px-4 text-[13px] font-semibold text-foreground"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {room.moderation && (

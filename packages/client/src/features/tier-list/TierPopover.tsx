@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Landmark, Link2, Lock, Pencil, Plus, ShoppingCart, Swords, Trash2, Unlock, X } from "lucide-react";
+import { Gamepad2, Landmark, Link2, Lock, Pencil, Plus, ShoppingCart, Swords, Target, Trash2, Unlock, X } from "lucide-react";
 
-import type { ChangeEntry, Item, Member, Tier } from "@tier-list/shared";
+import type { ChangeEntry, DuelGameMode, Item, Member, Tier } from "@tier-list/shared";
 import { useOg } from "@/lib/queries";
 
 function swatch(name: string): string {
@@ -96,7 +96,7 @@ type TierPopoverProps = {
   onPool: () => void;
   onStartVote?: () => void;
   /** Open a tier decision match to move the item into `tierId` (room only). */
-  onProposeDecision?: (tierId: string) => void;
+  onProposeDecision?: (tierId: string, mode: DuelGameMode) => void;
   /** Room has Coupang shortcut enabled → show a top-left Coupang search button. */
   coupang?: boolean;
   /** Active tier lock on this item — shows a 🔒 banner. */
@@ -135,7 +135,10 @@ export function TierPopover({
 }: TierPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [linkDraft, setLinkDraft] = useState("");
-  const [duelMode, setDuelMode] = useState(false);
+  // 티어 결정전 신청 오버플로: 목표 티어 + 게임 종류 선택.
+  const [duelOpen, setDuelOpen] = useState(false);
+  const [duelTier, setDuelTier] = useState<string | null>(null);
+  const [duelGame, setDuelGame] = useState<DuelGameMode>("timing");
   const [lockMenu, setLockMenu] = useState(false);
   const links = item.links ?? [];
 
@@ -264,17 +267,8 @@ export function TierPopover({
             </div>
           )}
           <div className="px-3 pt-[9px] pb-1.5">
-            <div
-              className="mb-1.5 flex items-center gap-1 text-[10px] font-bold tracking-wide"
-              style={{ color: duelMode ? "#818CF8" : "#6A707E" }}
-            >
-              {duelMode ? (
-                <>
-                  <Swords className="size-3" /> 결정전 — 목표 티어 선택
-                </>
-              ) : (
-                "티어로 보내기"
-              )}
+            <div className="mb-1.5 flex items-center gap-1 text-[10px] font-bold tracking-wide text-[#6A707E]">
+              티어로 보내기
             </div>
             <div className="flex flex-wrap gap-[5px]">
               {tiers.map((t) => (
@@ -282,13 +276,12 @@ export function TierPopover({
                   key={t.id}
                   type="button"
                   title={t.label}
-                  onClick={() => (duelMode ? onProposeDecision?.(t.id) : onMove(t.id))}
+                  onClick={() => onMove(t.id)}
                   className="font-display grid h-[38px] min-w-[36px] flex-1 place-items-center rounded-[5px] px-2 leading-[1.25] whitespace-nowrap text-white"
                   style={{
                     background: t.color,
                     fontSize: labelFont(t.label),
                     border: currentTierId === t.id ? "2px solid #fff" : "none",
-                    boxShadow: duelMode ? "0 0 0 2px #818CF8" : undefined,
                     textShadow: "0 1px 2px rgba(0,0,0,.35)",
                   }}
                 >
@@ -299,15 +292,14 @@ export function TierPopover({
             {onProposeDecision && (
               <button
                 type="button"
-                onClick={() => setDuelMode((v) => !v)}
-                className="mt-1.5 flex h-7 w-full items-center justify-center gap-1.5 rounded-[5px] text-[11px] font-bold transition-colors"
-                style={
-                  duelMode
-                    ? { background: "#6366F1", color: "#fff" }
-                    : { background: "#171B22", color: "#A9AEF5", border: "1px solid rgba(129,140,248,.4)" }
-                }
+                onClick={() => {
+                  setDuelTier(null);
+                  setDuelGame("timing");
+                  setDuelOpen(true);
+                }}
+                className="mt-1.5 flex h-7 w-full items-center justify-center gap-1.5 rounded-[5px] border border-[rgba(129,140,248,.4)] bg-[#171B22] text-[11px] font-bold text-[#A9AEF5]"
               >
-                <Swords className="size-3.5" /> {duelMode ? "결정전 취소" : "티어 결정전 신청"}
+                <Swords className="size-3.5" /> 티어 결정전 신청
               </button>
             )}
           </div>
@@ -405,6 +397,92 @@ export function TierPopover({
           )}
         </div>
       </div>
+
+      {duelOpen && onProposeDecision && (
+        <>
+          <div className="fixed inset-0 z-[80] bg-black/70" onClick={() => setDuelOpen(false)} />
+          <div
+            className="fixed top-1/2 left-1/2 z-[81] w-[360px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 rounded-[12px] border border-[#242a3a] bg-[#13161D] p-5"
+            style={{ boxShadow: "0 24px 64px rgba(0,0,0,.6)", animation: "popIn .16s ease both" }}
+          >
+            <div className="mb-1 flex items-center gap-1.5 text-[15px] font-extrabold text-[#EDEAE2]">
+              <Swords className="size-4 text-[#818CF8]" /> 티어 결정전 신청
+            </div>
+            <div className="mb-3.5 text-[12px] text-[#8A8F9C]">
+              <b className="text-[#C4C8D2]">{item.name}</b> 을(를) 어느 티어로 보낼지 결투로 겨룹니다.
+            </div>
+
+            <label className="mb-1.5 block text-[11px] font-bold tracking-wide text-[#8A8F9C]">목표 티어</label>
+            <div className="mb-4 flex flex-wrap gap-[5px]">
+              {tiers
+                .filter((t) => t.id !== currentTierId)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    title={t.label}
+                    onClick={() => setDuelTier(t.id)}
+                    className="font-display grid h-[42px] min-w-[42px] flex-1 place-items-center rounded-[6px] px-2 whitespace-nowrap text-white"
+                    style={{
+                      background: t.color,
+                      fontSize: labelFont(t.label),
+                      border: duelTier === t.id ? "2px solid #fff" : "2px solid transparent",
+                      boxShadow: duelTier === t.id ? "0 0 0 2px #818CF8" : undefined,
+                      textShadow: "0 1px 2px rgba(0,0,0,.35)",
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+            </div>
+
+            <label className="mb-1.5 block text-[11px] font-bold tracking-wide text-[#8A8F9C]">게임 종류</label>
+            <div className="mb-5 flex gap-2">
+              {([
+                { id: "timing", name: "타이밍", desc: "정밀 타이밍 바", Icon: Target },
+                { id: "combo", name: "콤보 러시", desc: "방향키 콤보", Icon: Gamepad2 },
+              ] as const).map((g) => {
+                const on = duelGame === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => setDuelGame(g.id)}
+                    className="flex flex-1 flex-col items-center gap-1 rounded-[8px] border px-2 py-2.5"
+                    style={
+                      on
+                        ? { borderColor: "#6366F1", background: "rgba(99,102,241,.14)", color: "#A5B4FC" }
+                        : { borderColor: "#2A303C", background: "#0E1117", color: "#8A8F9C" }
+                    }
+                  >
+                    <g.Icon className="size-5" />
+                    <span className="text-[12px] font-bold">{g.name}</span>
+                    <span className="text-[10px] opacity-80">{g.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDuelOpen(false)}
+                className="h-10 rounded-[8px] border border-[#2A303C] bg-[#171B22] px-4 text-[13px] font-semibold text-[#C4C8D2]"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={!duelTier}
+                onClick={() => duelTier && onProposeDecision(duelTier, duelGame)}
+                className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-[#6366F1] text-[13px] font-bold text-white disabled:opacity-40"
+              >
+                <Swords className="size-4" /> 결정전 신청
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

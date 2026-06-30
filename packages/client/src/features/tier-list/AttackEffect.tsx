@@ -12,6 +12,8 @@ type AttackEffectProps = {
   level?: number;
   /** Per-stack compound rate (0.1 = 10%; 0.05 for the admin 철벽 ½ skill). */
   perStack?: number;
+  /** Solo practice: the bot reflects immediately — shorten the post-result hold. */
+  quick?: boolean;
   /** Reflect the attack back; `escalate` = inner zone (level +1), else same level. */
   onParry?: (escalate: boolean) => void;
   /** Called once when this player gets hit (parry missed) — ends the rally. */
@@ -33,7 +35,7 @@ function hueOf(name: string): number {
 type Phase = "pending" | "reflect" | "parry" | "miss" | "hit";
 
 /** Full-screen DUEL!! effect with a parry mini-game (티어 결정전 연습/실전 공용). */
-export function AttackEffect({ attackKey, by, parryable = false, level = 0, perStack = 0.1, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
+export function AttackEffect({ attackKey, by, parryable = false, level = 0, perStack = 0.1, quick = false, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
   const [phase, setPhase] = useState<Phase>(parryable ? "pending" : "hit");
   const posRef = useRef(0);
   const markerRef = useRef<HTMLDivElement>(null);
@@ -126,10 +128,18 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, perS
   // Auto-dismiss once resolved.
   useEffect(() => {
     if (phase === "pending") return;
-    const ms = success ? 2400 : phase === "hit" ? 2600 : 1900;
+    const ms = quick
+      ? success
+        ? 480 // snappy re-attack in solo practice
+        : 900
+      : success
+        ? 2400
+        : phase === "hit"
+          ? 2600
+          : 1900;
     const t = setTimeout(onDone, ms);
     return () => clearTimeout(t);
-  }, [phase, success, onDone]);
+  }, [phase, success, quick, onDone]);
 
   const floaters = useMemo(() => {
     const src = items.length

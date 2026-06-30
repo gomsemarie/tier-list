@@ -120,6 +120,8 @@ export type RoomSummary = {
   isPublic: boolean;
   /** Optional room cover image (data URL). */
   image?: string;
+  /** A few current participants (for avatar previews in the lobby). */
+  members?: { name: string; avatar?: string; frame?: string }[];
   createdAt: number;
   updatedAt: number;
 };

@@ -256,7 +256,7 @@ export function LivePanel({
                 return (
                   <div
                     key={m.id}
-                    className="rounded-[2px] border-2 border-[#2A3142] bg-[#0E1117] px-2.5 py-2 transition-opacity"
+                    className="shrink-0 rounded-[2px] border-2 border-[#2A3142] bg-[#0E1117] px-2.5 py-2 transition-opacity"
                     style={{ boxShadow: "2px 2px 0 rgba(0,0,0,.5)", opacity: r.ended ? 0.7 : 1 }}
                   >
                     <div className="mb-1.5 flex items-center gap-1.5">
@@ -308,7 +308,7 @@ export function LivePanel({
               }
               if (m.kind !== "user" && m.kind !== "super") {
                 return (
-                  <div key={m.id} className="flex items-center gap-1.5 text-[11px] text-[#7A808E]">
+                  <div key={m.id} className="flex shrink-0 items-center gap-1.5 text-[11px] text-[#7A808E]">
                     <span className="text-[#6366F1]">◆</span>
                     <span>
                       <span className="font-bold text-[#A4AAB6]">{m.author}</span> {m.text}
@@ -337,7 +337,7 @@ export function LivePanel({
               return (
                 <div
                   key={m.id}
-                  className={sc ? `relative overflow-hidden rounded-[8px] px-2.5 py-2.5 ${sc.gradient} ${sc.effect ?? ""}` : undefined}
+                  className={sc ? `relative shrink-0 overflow-hidden rounded-[8px] px-2.5 py-2.5 ${sc.gradient} ${sc.effect ?? ""}` : "shrink-0"}
                 >
                   {sc && (
                     <>

@@ -457,6 +457,11 @@ function roomSummary(room: Room): RoomSummary {
     memberCount: room.members.size,
     isPublic: room.isPublic,
     image: room.image || undefined,
+    members: [...room.members.values()].slice(0, 5).map((m) => ({
+      name: m.name,
+      avatar: m.avatar || undefined,
+      frame: m.frame || undefined,
+    })),
     createdAt: room.createdAt,
     updatedAt: Date.now(),
   };
@@ -964,6 +969,8 @@ function proposeDecision(
   proposerName: string,
 ): string | null {
   if (room.decision) return "이미 진행 중인 결정전이 있어요.";
+  const memberCount = new Set([...room.members.values()].map((m) => m.userId).filter(Boolean)).size;
+  if (memberCount < 2) return "결정전은 접속자가 2명 이상일 때만 신청할 수 있어요.";
   const item = room.state.items[itemId];
   if (!item) return "대상을 찾지 못했어요.";
   const target = room.state.tiers.find((t) => t.id === targetTierId);
@@ -1014,12 +1021,37 @@ function leaveDecision(io: Server, room: Room, userId: string) {
   broadcastDecision(io, room);
 }
 
+/** A match that never formed a real contest → no objection: the proposal passes
+ *  uncontested (item moves to the target tier and is locked). */
 function decisionCancel(io: Server, room: Room, why: string) {
   const d = room.decision;
   if (!d) return;
-  const itemName = room.state.items[d.itemId]?.name ?? "대상";
-  d.phase = "canceled";
-  pushMessage(room, message("system", `'${itemName}' 결정전 무산 — ${why}`, "action"));
+  const item = room.state.items[d.itemId];
+  const itemName = item?.name ?? "대상";
+  const target = d.targetTierId;
+  const targetValid = !!item && room.state.tiers.some((t) => t.id === target);
+  if (targetValid) {
+    const list = room.state.placement[target] ?? [];
+    room.state = tierListReducer(room.state, {
+      type: "moveItem",
+      itemId: d.itemId,
+      targetListId: target,
+      targetIndex: list.length,
+      by: "⚖️ 무산 (이의 없음)",
+      ts: Date.now(),
+    });
+    const until = Date.now() + DECISION_LOCK_MS;
+    room.tierLocks.set(d.itemId, { tierId: target, until, dur: DECISION_LOCK_MS, reason: "decision" });
+    d.result = { winner: "pro", outcome: "moved", toTier: target, lockUntil: until };
+    pushMessage(
+      room,
+      message("system", `결정전 무산(${why}) — 이의가 없어 '${itemName}'을(를) ${tierMeta(room, target).label} 티어로 이동·고정합니다.`, "action"),
+    );
+  } else {
+    d.result = { winner: "con", outcome: "kept", toTier: null };
+    pushMessage(room, message("system", `'${itemName}' 결정전 무산 — ${why}`, "action"));
+  }
+  d.phase = "resolved";
   broadcast(io, room);
   broadcastDecision(io, room);
   if (room.decisionTimer) clearTimeout(room.decisionTimer);

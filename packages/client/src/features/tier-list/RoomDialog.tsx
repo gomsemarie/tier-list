@@ -4,6 +4,7 @@ import { ImagePlus, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-
 
 import type { RoomSummary } from "@tier-list/shared";
 import { ImageSearchPanel } from "./ImageSearchPanel";
+import { Avatar } from "./Avatar";
 
 type RoomDialogProps = {
   rooms: RoomSummary[];
@@ -230,43 +231,65 @@ export function RoomDialog({
                     return (
                     <div
                       key={r.id}
-                      className="relative flex items-center gap-[13px] rounded-[8px] border border-[#232934] bg-[#0E1117] px-[15px] py-[13px]"
+                      className="relative flex gap-3 rounded-[10px] border border-[#232934] bg-[#0E1117] p-3"
                     >
-                      <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-[6px] border border-[#232934] bg-[#11141B]">
+                      {/* square cover image */}
+                      <div className="size-[92px] shrink-0 overflow-hidden rounded-[8px] border border-[#232934] bg-[#11141B]">
                         {r.image ? (
                           <img src={r.image} alt="" className="size-full object-cover" />
                         ) : (
-                          <span className="text-[15px] font-extrabold text-[#4A4F5B]">{r.title.slice(0, 1)}</span>
+                          <div
+                            className="grid size-full place-items-center text-[34px] font-extrabold text-[#2A3142]"
+                            style={{ background: "linear-gradient(135deg,#1B2030,#0E1117)" }}
+                          >
+                            {r.title.slice(0, 1)}
+                          </div>
                         )}
                       </div>
-                      <div className="flex flex-1 flex-col gap-[3px]">
-                        <div className="flex items-center gap-2">
-                          <span className="size-[7px] rounded-full bg-[#5BD3A0]" />
-                          <span className="text-[14px] font-bold text-[#EDEAE2]">{r.title}</span>
+
+                      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                        <div className="flex items-center gap-2 pr-7">
+                          <span className="size-[7px] shrink-0 rounded-full bg-[#5BD3A0]" />
+                          <span className="min-w-0 truncate text-[14px] font-bold text-[#EDEAE2]">{r.title}</span>
                           {mine && (
-                            <span className="rounded-[5px] bg-[rgba(99,102,241,.16)] px-1.5 py-0.5 text-[10px] font-bold text-[#A5B4FC]">
+                            <span className="shrink-0 rounded-[5px] bg-[rgba(99,102,241,.18)] px-1.5 py-0.5 text-[10px] font-bold text-[#A5B4FC]">
                               내 방
                             </span>
                           )}
                           {!r.isPublic && (
-                            <span className="rounded-[3px] border border-[#2A303C] px-1.5 py-px text-[9px] font-bold text-[#8A8F9C]">
+                            <span className="shrink-0 rounded-[3px] border border-[#2A303C] px-1.5 py-px text-[9px] font-bold text-[#8A8F9C]">
                               비공개
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-2.5 text-[11px] text-[#8A8F9C]">
+                        <div className="flex items-center gap-2 text-[11px] text-[#8A8F9C]">
                           <span className="font-mono tracking-[1px] text-[#C4C8D2]">{r.id}</span>
-                          {r.ownerName && <span>방장 {r.ownerName}</span>}
-                          <span>◍ {r.memberCount}명</span>
+                          {r.ownerName && <span className="truncate">방장 {r.ownerName}</span>}
+                          <span className="shrink-0">· 아이템 {r.itemCount}</span>
+                        </div>
+                        <div className="mt-auto flex items-center gap-2">
+                          {r.members && r.members.length > 0 && (
+                            <div className="flex items-center">
+                              <div className="flex -space-x-2">
+                                {r.members.map((m, i) => (
+                                  <span key={i} className="rounded-[5px] ring-2 ring-[#0E1117]">
+                                    <Avatar name={m.name} src={m.avatar} frame={m.frame} size={24} spin={false} />
+                                  </span>
+                                ))}
+                              </div>
+                              <span className="ml-1.5 text-[11px] font-bold text-[#8A8F9C]">{r.memberCount}명</span>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onJoin(r.id)}
+                            className="ml-auto h-[34px] shrink-0 rounded-[6px] bg-[#6366F1] px-[18px] text-[13px] font-bold text-white"
+                          >
+                            입장
+                          </button>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onJoin(r.id)}
-                        className="h-[38px] rounded-[6px] border border-[#2A303C] bg-[#171B22] px-[18px] text-[13px] font-semibold text-[#C4C8D2]"
-                      >
-                        입장
-                      </button>
+
                       {mine && (
                         <button
                           type="button"
@@ -275,7 +298,7 @@ export function RoomDialog({
                             const rect = e.currentTarget.getBoundingClientRect();
                             setMenu((m) => (m?.id === r.id ? null : { id: r.id, x: rect.right, y: rect.bottom }));
                           }}
-                          className="grid size-[38px] place-items-center rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[#C4C8D2]"
+                          className="absolute top-2 right-2 grid size-7 place-items-center rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[#C4C8D2]"
                         >
                           <MoreHorizontal className="size-4" />
                         </button>

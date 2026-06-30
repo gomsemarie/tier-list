@@ -1,35 +1,8 @@
 /* Phaser's lazy-loaded plain-object scene is untyped here — `this` is the live
    Scene and the API surface is `any`. Scoped to this file only. */
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-this-alias */
-import { useEffect, useRef, useState } from "react";
+import { DuelGameShell, DUEL_VW, type DuelGameProps, type DuelResult } from "./DuelGameShell";
 
-import { ARCADE, PIXEL, DuelTitle, RetroBackdrop, RetroSplash, type AttackItem } from "./duelChrome";
-
-type ComboRushEffectProps = {
-  attackKey: number;
-  by: string;
-  parryable?: boolean;
-  /** Difficulty stack — longer + faster combo. */
-  level?: number;
-  /** Per-stack compound rate for the time limit (0.1 = 10%; 0.05 for 철벽 ½). */
-  perStack?: number;
-  /** Solo practice: the bot reflects immediately — shorten the post-result hold. */
-  quick?: boolean;
-  /** Solo practice: not under attack → calm backdrop instead of the red strobe. */
-  calm?: boolean;
-  /** Items scattered as retro shrapnel in the backdrop. */
-  items?: AttackItem[];
-  /** Completed the combo in time → reflect (escalate). */
-  onParry?: (escalate: boolean) => void;
-  /** Ran out of time → you're hit. */
-  onHit?: () => void;
-  onDone: () => void;
-};
-
-// Phaser canvas holds ONLY the game (arrows + timer + pads); the retro chrome
-// (DUEL!! title, vignette, win/lose splash) is shared React — see duelChrome.
-const VW = 460;
-const VH = 280;
 const DIRS = ["U", "D", "L", "R"] as const;
 
 const ARROW_PATHS: Record<string, string> = {
@@ -47,11 +20,12 @@ function arrowSvgUri(dir: string, color: string): string {
   return "data:image/svg+xml;base64," + btoa(svg);
 }
 
-function makeComboScene(ss: number, p: { level: number; perStack: number; onResult: (k: "parry" | "hit") => void }) {
+/** Phaser scene: press the arrow sequence in time → win; run out → lose. */
+function comboScene(ss: number, p: { level: number; perStack: number; onResult: DuelResult }) {
   const lv = Math.max(0, Math.floor(p.level));
   const N = Math.min(10, 3 + lv);
   const T = Math.max(800, 2600 / Math.pow(1 + p.perStack, lv));
-  const W = VW * ss;
+  const W = DUEL_VW * ss;
   const u = (n: number) => n * ss;
   const font = (n: number) => `${n * ss}px`;
   const ICON = Math.round(34 * ss);
@@ -105,20 +79,16 @@ function makeComboScene(ss: number, p: { level: number; perStack: number; onResu
       s.timeText = s.add.text(RING_X, RING_Y, "", { fontFamily: "sans-serif", fontSize: font(15), color: "#EDEAE2", fontStyle: "bold" }).setOrigin(0.5);
       s.fb = s.add.text(W / 2, u(190), "", { fontFamily: "sans-serif", fontSize: font(15), fontStyle: "bold" }).setOrigin(0.5);
 
-      const resolve = (kind: "parry" | "hit") => {
-        if (s.done) return;
-        s.done = true;
-        p.onResult(kind);
-      };
-      s.resolve = resolve;
-
       const press = (d: string) => {
         if (s.done) return;
         if (d === s.seq[s.idx]) {
           s.burst(startX + s.idx * gap, ARROW_Y, GREEN);
           s.idx += 1;
           s.drawArrows();
-          if (s.idx >= N) resolve("parry");
+          if (s.idx >= N) {
+            s.done = true;
+            p.onResult("win", true);
+          }
         } else {
           const wrong = s.idx;
           s.arrows.forEach((img: any, i: number) => {
@@ -177,76 +147,29 @@ function makeComboScene(ss: number, p: { level: number; perStack: number; onResu
         g.strokePath();
       }
       if (s.timeText) s.timeText.setText((Math.max(0, s.remaining) / 1000).toFixed(1));
-      if (!s.done && s.remaining <= 0) s.resolve("hit");
+      if (!s.done && s.remaining <= 0) {
+        s.done = true;
+        p.onResult("lose");
+      }
     },
   };
 }
 
-/** Phaser arrow-combo parry mini-game wrapped in the shared retro duel chrome. */
-export function ComboRushEffect({ attackKey, by, parryable = true, level = 0, perStack = 0.1, quick = false, calm = false, items = [], onParry, onHit, onDone }: ComboRushEffectProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const doneRef = useRef(false);
-  const [phase, setPhase] = useState<"play" | "win" | "lose">(parryable ? "play" : "lose");
-  const lv = Math.max(0, Math.floor(level));
-
-  useEffect(() => {
-    if (!parryable) {
-      const t = setTimeout(onDone, 1100);
-      return () => clearTimeout(t);
-    }
-    let cancelled = false;
-    let game: any;
-    const finish = (kind: "parry" | "hit") => {
-      if (doneRef.current) return;
-      doneRef.current = true;
-      setPhase(kind === "parry" ? "win" : "lose");
-      if (kind === "parry") onParry?.(true);
-      else onHit?.();
-      setTimeout(() => !cancelled && onDone(), quick ? (kind === "parry" ? 320 : 700) : 650);
-    };
-    (async () => {
-      const Phaser = (await import("phaser")).default;
-      if (cancelled || !ref.current) return;
-      const ss = Math.min(3, Math.max(2, Math.round(window.devicePixelRatio || 1)));
-      game = new Phaser.Game({
-        type: Phaser.CANVAS,
-        width: VW * ss,
-        height: VH * ss,
-        parent: ref.current,
-        transparent: true,
-        scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-        render: { antialias: true, roundPixels: false },
-        scene: makeComboScene(ss, { level, perStack, onResult: finish }),
-      });
-    })();
-    return () => {
-      cancelled = true;
-      if (game) game.destroy(true);
-    };
-  }, [attackKey, parryable, level, perStack, quick, onParry, onHit, onDone]);
-
+/** 콤보 러시 — arrow-combo parry game (shared retro chrome via DuelGameShell). */
+export function ComboRushEffect(props: DuelGameProps) {
   return (
-    <div className="fixed inset-0 z-[100] overflow-hidden">
-      <RetroBackdrop phase={phase} items={items} seed={attackKey} calm={calm} />
-      <div className="grid h-full place-items-center">
-        {/* Keep the play chrome (and Phaser canvas) mounted; hide it under the splash. */}
-        <div className="flex flex-col items-center gap-3 select-none" style={{ display: phase === "play" ? undefined : "none" }}>
-          <DuelTitle />
-          <div className="-mt-2" style={{ fontFamily: PIXEL, fontSize: 15, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>
-            {by}님의 공격!
-          </div>
-          <div className="flex items-center justify-center gap-2">
-            <span style={{ fontFamily: ARCADE, fontSize: 22, color: "#FDE047", textShadow: "3px 3px 0 #000,0 0 14px rgba(253,224,71,.7)" }}>COMBO!</span>
-            {lv > 0 && <span style={{ fontFamily: ARCADE, fontSize: 12, color: "#FF6B5A", textShadow: "2px 2px 0 #000" }}>LV.{lv}</span>}
-          </div>
-          <div style={{ fontFamily: PIXEL, fontSize: 13, color: "#fff", textShadow: "1px 1px 0 #000" }}>
-            <span style={{ color: "#FDE047" }}>화살표 순서대로!</span> · <span style={{ color: "#FF8A7A" }}>틀리면 처음부터</span>
-          </div>
-          <div ref={ref} className="h-[280px] w-[460px] max-w-[92vw]" style={{ pointerEvents: "auto" }} />
-          <div style={{ fontFamily: PIXEL, fontSize: 11, color: "#9AD8E8", animation: "blink 1s steps(1) infinite" }}>방향키 또는 탭</div>
-        </div>
-        {phase !== "play" && <RetroSplash phase={phase} by={by} sub={phase === "win" ? "콤보 성공 — 상대 차례!" : undefined} />}
-      </div>
-    </div>
+    <DuelGameShell
+      {...props}
+      title="COMBO!"
+      titleColor="#FDE047"
+      instruction={
+        <>
+          <span style={{ color: "#FDE047" }}>화살표 순서대로!</span> · <span style={{ color: "#FF8A7A" }}>틀리면 처음부터</span>
+        </>
+      }
+      hint="방향키 또는 탭"
+      winSub="콤보 성공 — 상대 차례!"
+      scene={comboScene}
+    />
   );
 }

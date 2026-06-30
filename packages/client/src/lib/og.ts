@@ -18,27 +18,24 @@ function fallback(url: string): OgCard {
   return { url, title: hostOf(url), siteName: hostOf(url) };
 }
 
-const cache = new Map<string, Promise<OgCard>>();
-
-/** Fetch OpenGraph metadata for a URL via the dev `/api/og` proxy (cached). */
+/**
+ * Fetch OpenGraph metadata for a URL via the dev `/api/og` proxy. Always
+ * resolves (falls back to a bare host card on error). Caching/dedup is handled
+ * by TanStack Query — see `useOg` in `lib/queries`.
+ */
 export function fetchOg(url: string): Promise<OgCard> {
-  let p = cache.get(url);
-  if (!p) {
-    p = fetch(`/api/og?url=${encodeURIComponent(url)}`)
-      .then((r) => r.json())
-      .then((d): OgCard =>
-        !d || d.error
-          ? fallback(url)
-          : {
-              url: d.url ?? url,
-              title: d.title || hostOf(url),
-              description: d.description || undefined,
-              image: d.image || undefined,
-              siteName: d.siteName || hostOf(url),
-            },
-      )
-      .catch(() => fallback(url));
-    cache.set(url, p);
-  }
-  return p;
+  return fetch(`/api/og?url=${encodeURIComponent(url)}`)
+    .then((r) => r.json())
+    .then((d): OgCard =>
+      !d || d.error
+        ? fallback(url)
+        : {
+            url: d.url ?? url,
+            title: d.title || hostOf(url),
+            description: d.description || undefined,
+            image: d.image || undefined,
+            siteName: d.siteName || hostOf(url),
+          },
+    )
+    .catch(() => fallback(url));
 }

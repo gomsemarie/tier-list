@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Landmark, Link2, Lock, Pencil, Plus, ShoppingCart, Swords, Trash2, Unlock, X } from "lucide-react";
 
 import type { ChangeEntry, Item, Member, Tier } from "@tier-list/shared";
-import { fetchOg, type OgCard } from "../../lib/og";
+import { useOg } from "@/lib/queries";
 
 function swatch(name: string): string {
   let h = 0;
@@ -38,14 +38,7 @@ function hostOf(url: string): string {
 
 /** One related link rendered as an OpenGraph card (thumbnail + title + domain). */
 function LinkCard({ url, onRemove }: { url: string; onRemove?: () => void }) {
-  const [og, setOg] = useState<OgCard | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetchOg(url).then((d) => alive && setOg(d));
-    return () => {
-      alive = false;
-    };
-  }, [url]);
+  const { data: og } = useOg(url);
   const host = hostOf(url);
   return (
     <div className="group/lc relative flex overflow-hidden rounded-[6px] border border-[#2A303C] bg-[#171B22]">

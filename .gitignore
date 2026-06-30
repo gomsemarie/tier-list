@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Playwright MCP verification artifacts (screenshots, snapshots, console logs)
+.playwright-mcp/
+
 # SQLite database (server room persistence)
 *.db
 *.db-shm

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useMatch, useNavigate, useParams } from "react-router-dom";
 import { monitorForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { extractClosestEdge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import {
@@ -67,7 +68,6 @@ export function TierListPage() {
   const [form, setForm] = useState<{ item?: Item } | null>(null);
   const [bulk, setBulk] = useState(false);
   const [auth, setAuth] = useState(false);
-  const [lobby, setLobby] = useState(false);
   const [voteFor, setVoteFor] = useState<Item | null>(null);
   const [acct, setAcct] = useState(false);
   const [account, setAccount] = useState(false);
@@ -81,11 +81,62 @@ export function TierListPage() {
   const promoKeyRef = useRef<string | null>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
 
-  // Close the lobby once we're actually in a room.
-  const inRoom = !!room.room;
+  // --- REST-style routing (URL ⇄ realtime room) -----------------------------
+  // The path is the source of truth for which room we're in:
+  //   /              → solo board   /rooms → lobby   /rooms/:roomId → that room
+  const navigate = useNavigate();
+  const { roomId: routeRoomId } = useParams();
+  const lobby = !!useMatch("/rooms");
+  const targetRoom = routeRoomId ? routeRoomId.toUpperCase() : null;
+  const joinedId = room.room?.id ?? null;
+  const { authUser, error: roomError, joinRoom, leaveRoom, clearError } = room;
+  // Tracks the room we last asked to join, so a failed/ejected join can bounce
+  // home exactly once instead of re-attempting every render.
+  const requestedRef = useRef<string | null>(null);
+
+  // URL → realtime: join the room named in the path, or leave when it's gone.
+  // Only the solo "/" route forces a leave — at "/rooms" (lobby) we may be mid-
+  // create, where joinedId is about to be set and Effect B redirects to it.
   useEffect(() => {
-    if (inRoom) setLobby(false);
-  }, [inRoom]);
+    if (targetRoom) {
+      if (!authUser) return; // anon visitor on a share link — auth prompt below
+      if (joinedId !== targetRoom && requestedRef.current !== targetRoom) {
+        requestedRef.current = targetRoom;
+        clearError();
+        joinRoom(targetRoom);
+      }
+    } else if (!lobby) {
+      requestedRef.current = null;
+      if (joinedId) leaveRoom();
+    }
+  }, [targetRoom, lobby, authUser, joinedId, joinRoom, leaveRoom, clearError]);
+
+  // realtime → URL: reflect the joined room (e.g. right after creating one).
+  useEffect(() => {
+    if (joinedId && targetRoom !== joinedId) navigate(`/rooms/${joinedId}`, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joinedId]);
+
+  // Ejected (kicked/closed) or a failed join → return to the solo board.
+  useEffect(() => {
+    if (targetRoom && !joinedId && roomError && requestedRef.current === targetRoom) {
+      requestedRef.current = null;
+      navigate("/", { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomError, joinedId]);
+
+  // Anon visitor opened a /rooms or /rooms/:id link → prompt login.
+  useEffect(() => {
+    if ((lobby || targetRoom) && !authUser) setAuth(true);
+  }, [lobby, targetRoom, authUser]);
+
+  // Browser tab title tracks the active room.
+  useEffect(() => {
+    document.title = room.room?.title
+      ? `${room.room.title} · 티어리스트`
+      : "티어리스트 — 실시간 티어 정하기";
+  }, [room.room?.title]);
 
   const myMember = room.room?.members.find((m) => m.userId === room.authUser?.id);
   const canModerate =
@@ -251,7 +302,7 @@ export function TierListPage() {
             </span>
             <button
               type="button"
-              onClick={room.leaveRoom}
+              onClick={() => navigate("/")}
               className="flex h-[34px] items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-bold text-foreground"
             >
               <LogOut className="size-4" /> 나가기
@@ -260,7 +311,7 @@ export function TierListPage() {
         ) : (
           <button
             type="button"
-            onClick={() => (room.authUser ? setLobby(true) : setAuth(true))}
+            onClick={() => navigate("/rooms")}
             className="flex h-[34px] items-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-bold text-foreground"
           >
             <Users className="size-4" /> 멀티
@@ -806,7 +857,7 @@ export function TierListPage() {
           }}
           onJoin={(c) => {
             room.clearError();
-            room.joinRoom(c);
+            navigate(`/rooms/${c.toUpperCase()}`);
           }}
           onCreate={(t, p, img, cp) => {
             room.clearError();
@@ -816,7 +867,7 @@ export function TierListPage() {
           onSetCoupang={room.setRoomCoupang}
           onClose={() => {
             room.clearError();
-            setLobby(false);
+            navigate("/");
           }}
         />
       )}

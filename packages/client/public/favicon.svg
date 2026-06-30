@@ -1,0 +1,13 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="14" fill="#0E1117"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" stroke="#2A303C"/>
+  <!-- S tier (red) -->
+  <rect x="11" y="13" width="14" height="12" rx="3" fill="#FF5C5C"/>
+  <rect x="27" y="13" width="26" height="12" rx="3" fill="#2A303C"/>
+  <!-- A tier (amber) -->
+  <rect x="11" y="27" width="14" height="12" rx="3" fill="#F5B942"/>
+  <rect x="27" y="27" width="20" height="12" rx="3" fill="#2A303C"/>
+  <!-- B tier (green) -->
+  <rect x="11" y="41" width="14" height="12" rx="3" fill="#5BD3A0"/>
+  <rect x="27" y="41" width="14" height="12" rx="3" fill="#2A303C"/>
+</svg>

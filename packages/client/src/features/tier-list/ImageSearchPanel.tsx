@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Loader2, Plus, Search } from "lucide-react";
 
-import { searchAllImageCandidates, searchImageCandidates, type ImageCandidate } from "@/lib/imageSearch";
+import { type ImageCandidate } from "@/lib/imageSearch";
+import { imageSearchAllQuery, imageSearchQuery } from "@/lib/queries";
 
 type ImageSearchPanelProps = {
   /** Prefilled query (usually the item name); auto-searched on mount. */
@@ -12,6 +14,7 @@ type ImageSearchPanelProps = {
 
 /** Search a term → pick an image. Modal styled to match the dark handoff. */
 export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearchPanelProps) {
+  const qc = useQueryClient();
   const [query, setQuery] = useState(initialQuery);
   const [candidates, setCandidates] = useState<ImageCandidate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -23,7 +26,7 @@ export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearc
     if (!q) return;
     setMore(true);
     try {
-      const all = await searchAllImageCandidates(q);
+      const all = await qc.fetchQuery(imageSearchAllQuery(q));
       setCandidates((cur) => {
         const seen = new Set(cur.map((c) => c.thumbnail));
         return [...cur, ...all.filter((c) => !seen.has(c.thumbnail))];
@@ -31,7 +34,7 @@ export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearc
     } finally {
       setMore(false);
     }
-  }, [query]);
+  }, [query, qc]);
 
   const run = useCallback(async (term: string) => {
     const q = term.trim();
@@ -39,7 +42,7 @@ export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearc
     setLoading(true);
     setError(null);
     try {
-      const list = await searchImageCandidates(q);
+      const list = await qc.fetchQuery(imageSearchQuery(q));
       setCandidates(list);
       if (list.length === 0) setError("이미지를 찾지 못했습니다.");
     } catch (e) {
@@ -47,7 +50,7 @@ export function ImageSearchPanel({ initialQuery, onSelect, onClose }: ImageSearc
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [qc]);
 
   useEffect(() => {
     if (initialQuery.trim()) void run(initialQuery);

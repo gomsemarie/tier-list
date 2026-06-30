@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ImageOff, Loader2, Plus, SkipForward } from "lucide-react";
 
-import { searchAllImageCandidates, searchImageCandidates, type ImageCandidate } from "@/lib/imageSearch";
+import { type ImageCandidate } from "@/lib/imageSearch";
+import { imageSearchAllQuery, imageSearchQuery } from "@/lib/queries";
 
 type BulkAddDialogProps = {
   onSubmit: (entries: { name: string; imageUrl: string | null }[]) => void;
@@ -10,6 +12,7 @@ type BulkAddDialogProps = {
 
 /** Paste names → optionally search/verify/pick an image for each → add them all. */
 export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
+  const qc = useQueryClient();
   const [text, setText] = useState("");
   const [step, setStep] = useState<"names" | "images">("names");
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -34,13 +37,13 @@ export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
     setLoading(true);
     setCands([]);
     try {
-      setCands(await searchImageCandidates(q));
+      setCands(await qc.fetchQuery(imageSearchQuery(q)));
     } catch {
       setCands([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [qc]);
 
   const goImages = () => {
     picks.current = names.map(() => null);
@@ -63,7 +66,7 @@ export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
   const loadMore = async () => {
     setMore(true);
     try {
-      const all = await searchAllImageCandidates(names[idx]);
+      const all = await qc.fetchQuery(imageSearchAllQuery(names[idx]));
       setCands((cur) => {
         const seen = new Set(cur.map((c) => c.thumbnail));
         return [...cur, ...all.filter((c) => !seen.has(c.thumbnail))];

@@ -14,6 +14,8 @@ export type PersistedRoom = {
   isPublic: boolean;
   /** Optional room cover image (data URL); "" when unset. */
   image: string;
+  /** Show a Coupang search shortcut on item cards. */
+  coupang: boolean;
 };
 
 const DB_PATH = process.env.DB_PATH ?? "data/rooms.db";
@@ -50,10 +52,12 @@ if (!existing.has("is_public"))
   db.exec("ALTER TABLE rooms ADD COLUMN is_public INTEGER NOT NULL DEFAULT 1");
 if (!existing.has("image"))
   db.exec("ALTER TABLE rooms ADD COLUMN image TEXT NOT NULL DEFAULT ''");
+if (!existing.has("coupang"))
+  db.exec("ALTER TABLE rooms ADD COLUMN coupang INTEGER NOT NULL DEFAULT 0");
 
 const upsert = db.prepare(`
-  INSERT INTO rooms (id, title, owner_id, state, messages, created_at, updated_at, is_public, image)
-  VALUES (@id, @title, @owner_id, @state, @messages, @created_at, @updated_at, @is_public, @image)
+  INSERT INTO rooms (id, title, owner_id, state, messages, created_at, updated_at, is_public, image, coupang)
+  VALUES (@id, @title, @owner_id, @state, @messages, @created_at, @updated_at, @is_public, @image, @coupang)
   ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     owner_id = excluded.owner_id,
@@ -61,7 +65,8 @@ const upsert = db.prepare(`
     messages = excluded.messages,
     updated_at = excluded.updated_at,
     is_public = excluded.is_public,
-    image = excluded.image
+    image = excluded.image,
+    coupang = excluded.coupang
 `);
 
 export function saveRoom(room: PersistedRoom): void {
@@ -75,13 +80,14 @@ export function saveRoom(room: PersistedRoom): void {
     updated_at: Date.now(),
     is_public: room.isPublic ? 1 : 0,
     image: room.image ?? "",
+    coupang: room.coupang ? 1 : 0,
   });
 }
 
 export function loadAllRooms(): PersistedRoom[] {
   const rows = db
     .prepare(
-      "SELECT id, title, owner_id, state, messages, created_at, is_public, image FROM rooms",
+      "SELECT id, title, owner_id, state, messages, created_at, is_public, image, coupang FROM rooms",
     )
     .all() as {
     id: string;
@@ -92,6 +98,7 @@ export function loadAllRooms(): PersistedRoom[] {
     created_at: number;
     is_public: number;
     image: string | null;
+    coupang: number;
   }[];
   return rows.flatMap((r) => {
     try {
@@ -105,6 +112,7 @@ export function loadAllRooms(): PersistedRoom[] {
           createdAt: r.created_at,
           isPublic: r.is_public !== 0,
           image: r.image ?? "",
+          coupang: r.coupang !== 0,
         },
       ];
     } catch {

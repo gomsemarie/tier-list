@@ -64,6 +64,8 @@ type Room = {
   isPublic: boolean;
   /** Optional room cover image (data URL); "" when unset. */
   image: string;
+  /** Show a Coupang search shortcut on item cards. */
+  coupang: boolean;
   state: TierListState;
   messages: ChatMessage[];
   /** Recent tier moves for the live "변경 이력" panel (in-memory, not persisted). */
@@ -321,6 +323,7 @@ for (const persisted of loadAllRooms()) {
     createdAt: persisted.createdAt,
     isPublic: persisted.isPublic,
     image: persisted.image ?? "",
+    coupang: persisted.coupang ?? false,
     state: persisted.state,
     messages: persisted.messages,
     history: [],
@@ -443,6 +446,7 @@ function snapshot(room: Room): RoomSnapshot {
     members,
     history: room.history,
     locks,
+    coupang: room.coupang,
   };
 }
 
@@ -457,6 +461,7 @@ function roomSummary(room: Room): RoomSummary {
     memberCount: room.members.size,
     isPublic: room.isPublic,
     image: room.image || undefined,
+    coupang: room.coupang || undefined,
     members: [...room.members.values()].slice(0, 5).map((m) => ({
       name: m.name,
       avatar: m.avatar || undefined,
@@ -2176,7 +2181,7 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "room:create",
-    ({ title, isPublic, image }: { title?: string; isPublic?: boolean; image?: string }) => {
+    ({ title, isPublic, image, coupang }: { title?: string; isPublic?: boolean; image?: string; coupang?: boolean }) => {
       if (!authedUser) {
         socket.emit("room:error", "멀티플레이는 로그인이 필요합니다.");
         return;
@@ -2191,6 +2196,7 @@ io.on("connection", (socket: Socket) => {
         createdAt: Date.now(),
         isPublic: isPublic !== false, // default public
         image: typeof image === "string" ? image.slice(0, 600_000) : "",
+        coupang: coupang === true,
         state: createInitialState(),
         messages: [],
         history: [],
@@ -2254,6 +2260,19 @@ io.on("connection", (socket: Socket) => {
     }
     room.image = typeof image === "string" ? image.slice(0, 600_000) : "";
     saveRoom(room);
+    broadcastRoomList(io);
+  });
+
+  socket.on("room:setCoupang", ({ roomId, enabled }: { roomId?: string; enabled?: boolean }) => {
+    const room = rooms.get(String(roomId ?? "").toUpperCase().trim());
+    if (!room) return;
+    if (!authedUser || (room.ownerId !== authedUser.id && !authedUser.isAdmin)) {
+      socket.emit("room:error", "내가 만든 방만 관리할 수 있어요.");
+      return;
+    }
+    room.coupang = enabled === true;
+    saveRoom(room);
+    broadcast(io, room); // refresh the board (item cards show/hide the shortcut)
     broadcastRoomList(io);
   });
 

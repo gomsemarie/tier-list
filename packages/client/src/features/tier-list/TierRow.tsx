@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
-import { X } from "lucide-react";
+import { ArrowDownToLine, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { ItemCard } from "./ItemCard";
@@ -21,6 +21,8 @@ type TierRowProps = {
   votingItemId?: string;
   /** Active tier locks by item id (🔒 countdown badge). */
   locks?: Record<string, { label: string; until: number; dur: number }>;
+  /** Room has Coupang shortcut enabled. */
+  coupang?: boolean;
   selectedItemId?: string | null;
   dndEnabled?: boolean;
   onSelectItem?: (item: Item, rect: DOMRect) => void;
@@ -37,6 +39,7 @@ export function TierRow({
   matchedIds,
   votingItemId,
   locks,
+  coupang,
   selectedItemId,
   dndEnabled = true,
   onSelectItem,
@@ -162,12 +165,23 @@ export function TierRow({
       <div
         ref={dropRef}
         className={cn(
-          "flex min-h-[84px] flex-1 flex-wrap content-center items-center gap-[7px] bg-paper p-[9px] transition-colors",
+          "relative flex min-h-[84px] flex-1 flex-wrap content-center items-center gap-[7px] bg-paper p-[9px] transition-colors",
           over && "bg-accent",
         )}
       >
         {items.length === 0 && !over && (
           <span className="px-1 text-xs text-muted-foreground/70">비어 있음</span>
+        )}
+        {over && (
+          <>
+            {/* Dashed dropzone outline + centered hint — both non-blocking so
+                drop detection and the per-card reorder edge still work. */}
+            <div className="pointer-events-none absolute inset-[3px] z-10 rounded-[6px] border-2 border-dashed border-foreground/45" />
+            <span className="pointer-events-none absolute top-1/2 left-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-full bg-foreground/90 px-3 py-1 text-[11px] font-extrabold whitespace-nowrap text-background shadow-[0_2px_8px_rgba(0,0,0,.4)]">
+              <ArrowDownToLine className="size-3.5" strokeWidth={2.6} />
+              여기에 놓기
+            </span>
+          </>
         )}
         {items.map((item) => (
           <ItemCard
@@ -178,6 +192,7 @@ export function TierRow({
             dim={matchedIds ? !matchedIds.has(item.id) : undefined}
             voting={votingItemId === item.id}
             lock={locks?.[item.id]}
+            coupang={coupang}
             selected={selectedItemId === item.id}
             dndEnabled={dndEnabled}
             onSelect={onSelectItem}

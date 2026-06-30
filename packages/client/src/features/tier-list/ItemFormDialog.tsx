@@ -64,7 +64,14 @@ export function ItemFormDialog({ item, onSubmit, onDelete, onClose }: ItemFormDi
           ref={nameRef}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && submit()}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            // Add mode + no image yet → name+Enter opens the image picker. Once an
+            // image is set (or when editing), Enter saves.
+            if (!item && !imageUrl && name.trim()) setSearching(true);
+            else submit();
+          }}
           className="mb-4 h-[38px] w-full rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-3 text-[13px] text-[#EDEAE2] outline-none focus:border-[#6366F1]"
         />
 

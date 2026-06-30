@@ -11,6 +11,8 @@ type ItemPoolProps = {
   items: Item[];
   matchedIds?: Set<string> | null;
   votingItemId?: string;
+  /** Room has Coupang shortcut enabled. */
+  coupang?: boolean;
   selectedItemId?: string | null;
   dndEnabled?: boolean;
   onSelectItem?: (item: Item, rect: DOMRect) => void;
@@ -21,6 +23,7 @@ export function ItemPool({
   items,
   matchedIds,
   votingItemId,
+  coupang,
   selectedItemId,
   dndEnabled = true,
   onSelectItem,
@@ -63,6 +66,7 @@ export function ItemPool({
             highlight={matchedIds ? matchedIds.has(item.id) : undefined}
             dim={matchedIds ? !matchedIds.has(item.id) : undefined}
             voting={votingItemId === item.id}
+            coupang={coupang}
             selected={selectedItemId === item.id}
             dndEnabled={dndEnabled}
             onSelect={onSelectItem}

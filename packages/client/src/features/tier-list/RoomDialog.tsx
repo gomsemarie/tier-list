@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ImagePlus, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ImagePlus, MoreHorizontal, Pencil, Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
 
 import type { RoomSummary } from "@tier-list/shared";
 import { ImageSearchPanel } from "./ImageSearchPanel";
@@ -14,10 +14,11 @@ type RoomDialogProps = {
   error?: string | null;
   onRefresh: () => void;
   onJoin: (code: string) => void;
-  onCreate: (title: string, isPublic: boolean, image: string) => void;
+  onCreate: (title: string, isPublic: boolean, image: string, coupang: boolean) => void;
   onRename: (roomId: string, title: string) => void;
   onDelete: (roomId: string) => void;
   onSetImage: (roomId: string, image: string) => void;
+  onSetCoupang: (roomId: string, enabled: boolean) => void;
   onClose: () => void;
 };
 
@@ -43,12 +44,14 @@ export function RoomDialog({
   onRename,
   onDelete,
   onSetImage,
+  onSetCoupang,
   onClose,
 }: RoomDialogProps) {
   const [code, setCode] = useState("");
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [isPublic, setIsPublic] = useState(true);
+  const [coupang, setCoupang] = useState(false);
   const [cover, setCover] = useState("");
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   // Image-search target: "create" (the create form) or a room id (existing room).
@@ -95,7 +98,7 @@ export function RoomDialog({
                 autoFocus
                 placeholder="예: 라면 티어 정하기"
                 onChange={(e) => setTitle(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && title.trim() && onCreate(title.trim(), isPublic, cover)}
+                onKeyDown={(e) => e.key === "Enter" && !e.nativeEvent.isComposing && title.trim() && onCreate(title.trim(), isPublic, cover, coupang)}
                 className="mb-4 h-[38px] w-full rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-3 text-[13px] text-[#EDEAE2] outline-none focus:border-[#6366F1]"
               />
               <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">대표 이미지 (선택)</label>
@@ -168,6 +171,27 @@ export function RoomDialog({
                   비공개 (코드만)
                 </button>
               </div>
+              <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">쿠팡 바로가기</label>
+              <button
+                type="button"
+                onClick={() => setCoupang((v) => !v)}
+                className="mb-4 flex w-full items-center gap-2.5 rounded-[6px] border px-3 py-2.5 text-left"
+                style={
+                  coupang
+                    ? { borderColor: "#C81E2D", background: "rgba(200,30,45,.12)" }
+                    : { borderColor: "#2A303C", background: "#0E1117" }
+                }
+              >
+                <span
+                  className="grid size-[18px] shrink-0 place-items-center rounded-[4px] border"
+                  style={coupang ? { borderColor: "#C81E2D", background: "#C81E2D" } : { borderColor: "#3A4152" }}
+                >
+                  {coupang && <ShoppingCart className="size-3 text-white" strokeWidth={3} />}
+                </span>
+                <span className="text-[12px] leading-[1.4]" style={{ color: coupang ? "#F0B4B9" : "#8A8F9C" }}>
+                  아이템 카드에 쿠팡 검색 바로가기 버튼을 표시합니다.
+                </span>
+              </button>
               <div className="mb-[18px] text-[11px] leading-[1.5] text-[#8A8F9C]">
                 생성하면 4자리 초대 코드가 발급됩니다. 방장 권한으로 티어·참가자·모더레이션을 관리할 수 있어요.
               </div>
@@ -182,7 +206,7 @@ export function RoomDialog({
                 <button
                   type="button"
                   disabled={!title.trim()}
-                  onClick={() => onCreate(title.trim(), isPublic, cover)}
+                  onClick={() => onCreate(title.trim(), isPublic, cover, coupang)}
                   className="h-10 flex-1 rounded-[6px] bg-[#6366F1] text-[13px] font-bold text-white disabled:opacity-40"
                 >
                   방 만들기
@@ -342,6 +366,16 @@ export function RoomDialog({
                               className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#D5D8E2] hover:bg-[#1B2029]"
                             >
                               <Search className="size-3.5" /> 대표 이미지 검색
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMenu(null);
+                                onSetCoupang(r.id, !r.coupang);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-[5px] px-2.5 py-2 text-[12px] text-[#D5D8E2] hover:bg-[#1B2029]"
+                            >
+                              <ShoppingCart className="size-3.5" /> {r.coupang ? "쿠팡 바로가기 끄기" : "쿠팡 바로가기 켜기"}
                             </button>
                             <button
                               type="button"

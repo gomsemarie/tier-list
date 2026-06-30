@@ -101,6 +101,8 @@ export type RoomSnapshot = {
   members: Member[];
   /** Recent tier moves (most recent first); optional for back-compat. */
   history?: ChangeEntry[];
+  /** When true, item cards show a Coupang search shortcut. */
+  coupang?: boolean;
   /** Items pinned to a tier by a won decision match or a vote (itemId → lock);
    *  drives the board's 🔒 highlight and blocks D&D/vote/re-propose until `until`. */
   locks?: Record<
@@ -122,6 +124,8 @@ export type RoomSummary = {
   isPublic: boolean;
   /** Optional room cover image (data URL). */
   image?: string;
+  /** Coupang search shortcut enabled on item cards. */
+  coupang?: boolean;
   /** A few current participants (for avatar previews in the lobby). */
   members?: { name: string; avatar?: string; frame?: string }[];
   createdAt: number;

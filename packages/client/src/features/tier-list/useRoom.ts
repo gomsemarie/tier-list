@@ -105,8 +105,9 @@ export type RoomConnection = {
   equipPerk: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => Promise<UpdateResult>;
   fetchCodes: () => Promise<CodeInfo[]>;
   issueCode: (perks: string[]) => Promise<IssueCodeResult>;
-  createRoom: (title: string, isPublic?: boolean, image?: string) => void;
+  createRoom: (title: string, isPublic?: boolean, image?: string, coupang?: boolean) => void;
   setRoomImage: (roomId: string, image: string) => void;
+  setRoomCoupang: (roomId: string, enabled: boolean) => void;
   joinRoom: (roomId: string) => void;
   leaveRoom: () => void;
   listRooms: () => void;
@@ -421,14 +422,18 @@ export function useRoom(): RoomConnection {
     [],
   );
 
-  const createRoom = useCallback((title: string, isPublic = true, image = "") => {
+  const createRoom = useCallback((title: string, isPublic = true, image = "", coupang = false) => {
     setError(null);
-    socketRef.current?.emit("room:create", { title, isPublic, image });
+    socketRef.current?.emit("room:create", { title, isPublic, image, coupang });
     if (optOutRef.current) socketRef.current?.emit("vote:optout", { enabled: true });
   }, []);
 
   const setRoomImage = useCallback((roomId: string, image: string) => {
     socketRef.current?.emit("room:setImage", { roomId, image });
+  }, []);
+
+  const setRoomCoupang = useCallback((roomId: string, enabled: boolean) => {
+    socketRef.current?.emit("room:setCoupang", { roomId, enabled });
   }, []);
 
   const joinRoom = useCallback((roomId: string) => {
@@ -572,6 +577,7 @@ export function useRoom(): RoomConnection {
     issueCode,
     createRoom,
     setRoomImage,
+    setRoomCoupang,
     joinRoom,
     leaveRoom,
     listRooms,

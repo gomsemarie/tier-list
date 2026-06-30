@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Landmark, Link2, Lock, Pencil, Plus, Swords, Trash2, Unlock, X } from "lucide-react";
+import { Landmark, Link2, Lock, Pencil, Plus, ShoppingCart, Swords, Trash2, Unlock, X } from "lucide-react";
 
 import type { ChangeEntry, Item, Member, Tier } from "@tier-list/shared";
 import { fetchOg, type OgCard } from "../../lib/og";
@@ -104,6 +104,8 @@ type TierPopoverProps = {
   onStartVote?: () => void;
   /** Open a tier decision match to move the item into `tierId` (room only). */
   onProposeDecision?: (tierId: string) => void;
+  /** Room has Coupang shortcut enabled → show a top-left Coupang search button. */
+  coupang?: boolean;
   /** Active tier lock on this item — shows a 🔒 banner. */
   lock?: { tierLabel: string; until: number; reason: "decision" | "vote" | "admin" };
   /** Owner/admin: pin the item for `seconds` (top-right lock button). */
@@ -129,6 +131,7 @@ export function TierPopover({
   onPool,
   onStartVote,
   onProposeDecision,
+  coupang,
   lock,
   onLock,
   onUnlock,
@@ -228,6 +231,17 @@ export function TierPopover({
             >
               {item.name.slice(0, 2)}
             </div>
+          )}
+          {coupang && (
+            <a
+              href={`https://www.coupang.com/np/search?q=${encodeURIComponent(item.name)}`}
+              target="_blank"
+              rel="noreferrer noopener"
+              title={`쿠팡에서 '${item.name}' 검색`}
+              className="absolute top-2 left-2 z-[53] flex items-center gap-1 rounded-[7px] bg-[#C81E2D] px-2 py-1.5 text-[11px] font-bold text-white hover:bg-[#E0212F]"
+            >
+              <ShoppingCart className="size-3.5" strokeWidth={2.5} /> 쿠팡
+            </a>
           )}
           <div
             className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 px-3 pt-9 pb-2"

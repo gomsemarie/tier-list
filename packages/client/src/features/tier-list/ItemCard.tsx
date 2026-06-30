@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Lock } from "lucide-react";
+import { Lock, ShoppingCart } from "lucide-react";
 import { draggable, dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
@@ -27,6 +27,8 @@ type ItemCardProps = {
   voting?: boolean;
   /** Pinned to this tier (decision/vote/admin) — glow ring + countdown badge. */
   lock?: { label: string; until: number; dur: number };
+  /** Room has Coupang shortcut enabled → show a top-left Coupang search button. */
+  coupang?: boolean;
   selected?: boolean;
   dndEnabled?: boolean;
 };
@@ -82,6 +84,7 @@ export function ItemCard({
   dim,
   voting,
   lock,
+  coupang,
   selected,
   dndEnabled = true,
 }: ItemCardProps) {
@@ -175,6 +178,18 @@ export function ItemCard({
             <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#818CF8_inset,0_0_12px_rgba(129,140,248,.6)]" />
             <LockTimer lock={lock} />
           </>
+        )}
+        {coupang && !voting && (
+          <a
+            href={`https://www.coupang.com/np/search?q=${encodeURIComponent(item.name)}`}
+            target="_blank"
+            rel="noreferrer noopener"
+            onClick={(e) => e.stopPropagation()}
+            title={`쿠팡에서 '${item.name}' 검색`}
+            className="absolute top-[3px] left-[3px] grid size-[16px] place-items-center rounded-[3px] bg-[#C81E2D] text-white hover:bg-[#E0212F]"
+          >
+            <ShoppingCart className="size-2.5" strokeWidth={2.5} />
+          </a>
         )}
         {selected && (
           <div className="pointer-events-none absolute inset-0 rounded-[4px] shadow-[0_0_0_2px_#F5B942_inset]" />

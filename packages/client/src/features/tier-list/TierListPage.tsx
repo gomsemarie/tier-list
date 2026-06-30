@@ -24,6 +24,7 @@ import { AuthDialog } from "./AuthDialog";
 import { Avatar } from "./Avatar";
 import { BanWarningFrame } from "./BanWarningFrame";
 import { BulkAddDialog } from "./BulkAddDialog";
+import { ImageSearchPanel } from "./ImageSearchPanel";
 import { HintToast } from "./HintToast";
 import { ItemFormDialog } from "./ItemFormDialog";
 import { ItemPool } from "./ItemPool";
@@ -61,6 +62,7 @@ export function TierListPage() {
   const [sortAZ, setSortAZ] = useState(false);
   const [topN, setTopN] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [quickSearch, setQuickSearch] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ item: Item; anchor: DOMRect } | null>(null);
   const [form, setForm] = useState<{ item?: Item } | null>(null);
   const [bulk, setBulk] = useState(false);
@@ -171,8 +173,8 @@ export function TierListPage() {
   function quickAdd() {
     const n = draftName.trim();
     if (!n) return;
-    controller.addItem(n, null);
     setDraftName("");
+    setQuickSearch(n); // open the image picker for this name
   }
 
   const q = search.trim().toLowerCase();
@@ -465,6 +467,7 @@ export function TierListPage() {
                 canDelete={state.tiers.length > 1}
                 matchedIds={matchedIds}
                 locks={locks}
+                coupang={room.room?.coupang}
                 selectedItemId={menu?.item.id ?? null}
                 dndEnabled={!sortAZ}
                 onSelectItem={(item, anchor) => setMenu({ item, anchor })}
@@ -515,6 +518,7 @@ export function TierListPage() {
           <ItemPool
             items={itemsOf(POOL_ID)}
             matchedIds={matchedIds}
+            coupang={room.room?.coupang}
             selectedItemId={menu?.item.id ?? null}
             dndEnabled={!sortAZ}
             onSelectItem={(item, anchor) => setMenu({ item, anchor })}
@@ -553,6 +557,7 @@ export function TierListPage() {
           currentTierId={tierOf(menu.item.id)}
           history={room.room?.history?.filter((h) => h.itemName === menu.item.name)}
           members={room.room?.members}
+          coupang={room.room?.coupang}
           onMove={(tierId) => {
             controller.moveItem(menu.item.id, tierId, state.placement[tierId]?.length ?? 0);
             setMenu(null);
@@ -637,11 +642,25 @@ export function TierListPage() {
 
       {bulk && (
         <BulkAddDialog
-          onSubmit={(names) => {
-            controller.addItems(names.map((name) => ({ name, imageUrl: null })));
+          onSubmit={(entries) => {
+            controller.addItems(entries);
             setBulk(false);
           }}
           onClose={() => setBulk(false)}
+        />
+      )}
+
+      {quickSearch && (
+        <ImageSearchPanel
+          initialQuery={quickSearch}
+          onSelect={(url) => {
+            controller.addItem(quickSearch, url);
+            setQuickSearch(null);
+          }}
+          onClose={() => {
+            controller.addItem(quickSearch, null);
+            setQuickSearch(null);
+          }}
         />
       )}
 
@@ -789,11 +808,12 @@ export function TierListPage() {
             room.clearError();
             room.joinRoom(c);
           }}
-          onCreate={(t, p, img) => {
+          onCreate={(t, p, img, cp) => {
             room.clearError();
-            room.createRoom(t, p, img);
+            room.createRoom(t, p, img, cp);
           }}
           onSetImage={room.setRoomImage}
+          onSetCoupang={room.setRoomCoupang}
           onClose={() => {
             room.clearError();
             setLobby(false);

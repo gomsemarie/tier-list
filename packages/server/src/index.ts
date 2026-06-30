@@ -489,6 +489,33 @@ function broadcast(io: Server, room: Room) {
   saveRoom(room); // persist every change
 }
 
+/** Record a tier move in the live 변경 이력 panel (who · from → to · when).
+ *  Call AFTER the move is applied, passing the captured source tier id. */
+function recordHistory(
+  room: Room,
+  itemId: string,
+  fromTierId: string | null,
+  toTierId: string,
+  actor: string,
+  actorId?: string,
+) {
+  const item = room.state.items[itemId];
+  const toTier = room.state.tiers.find((t) => t.id === toTierId);
+  if (!item || !toTier) return;
+  const fromTier = fromTierId ? room.state.tiers.find((t) => t.id === fromTierId) : null;
+  room.history.unshift({
+    id: crypto.randomUUID(),
+    actor,
+    actorId,
+    itemName: item.name,
+    fromLabel: fromTier ? fromTier.label : "미배치",
+    toLabel: toTier.label,
+    toColor: toTier.color,
+    ts: Date.now(),
+  });
+  room.history = room.history.slice(0, 20);
+}
+
 // --- 인정협회 티어 투표 ------------------------------------------------------
 
 /** Tier id the item is currently placed in, or null if unplaced/missing. */
@@ -736,6 +763,7 @@ function endVote(io: Server, room: Room) {
 
   if (winners.length === 1) {
     const target = winners[0];
+    const from = tierOfItem(room.state, v.itemId);
     const list = room.state.placement[target] ?? [];
     room.state = tierListReducer(room.state, {
       type: "moveItem",
@@ -745,6 +773,7 @@ function endVote(io: Server, room: Room) {
       by: "🏛️ 인정협회 투표",
       ts: Date.now(),
     });
+    recordHistory(room, v.itemId, from, target, "🏛️ 인정협회 투표");
     v.result = { outcome: "moved", toTier: target, counts };
     applyVoteLock(room, v.itemId, v.durationMs);
     pushMessage(
@@ -1031,6 +1060,7 @@ function decisionCancel(io: Server, room: Room, why: string) {
   const target = d.targetTierId;
   const targetValid = !!item && room.state.tiers.some((t) => t.id === target);
   if (targetValid) {
+    const from = tierOfItem(room.state, d.itemId);
     const list = room.state.placement[target] ?? [];
     room.state = tierListReducer(room.state, {
       type: "moveItem",
@@ -1040,6 +1070,7 @@ function decisionCancel(io: Server, room: Room, why: string) {
       by: "⚖️ 무산 (이의 없음)",
       ts: Date.now(),
     });
+    recordHistory(room, d.itemId, from, target, `${d.proposerName} (결정전 무산)`, d.proposerId);
     const until = Date.now() + DECISION_LOCK_MS;
     room.tierLocks.set(d.itemId, { tierId: target, until, dur: DECISION_LOCK_MS, reason: "decision" });
     d.result = { winner: "pro", outcome: "moved", toTier: target, lockUntil: until };
@@ -1248,6 +1279,7 @@ function resolveDecision(io: Server, room: Room, winner: DecisionSide) {
   const itemName = item?.name ?? "대상";
   if (winner === "pro") {
     const target = d.targetTierId;
+    const from = tierOfItem(room.state, d.itemId);
     const list = room.state.placement[target] ?? [];
     room.state = tierListReducer(room.state, {
       type: "moveItem",
@@ -1257,6 +1289,7 @@ function resolveDecision(io: Server, room: Room, winner: DecisionSide) {
       by: "⚔️ 티어 결정전",
       ts: Date.now(),
     });
+    recordHistory(room, d.itemId, from, target, `${d.proposerName} (결정전)`, d.proposerId);
     const until = Date.now() + DECISION_LOCK_MS;
     room.tierLocks.set(d.itemId, { tierId: target, until, dur: DECISION_LOCK_MS, reason: "decision" });
     d.result = { winner, outcome: "moved", toTier: target, lockUntil: until };
@@ -2438,6 +2471,8 @@ io.on("connection", (socket: Socket) => {
         return;
       }
     }
+    // Capture the source tier *before* the move so history shows from → to.
+    const moveFrom = action.type === "moveItem" ? tierOfItem(room.state, action.itemId) : null;
     // Stamp the actor on add / move actions (the client can't be trusted to).
     const stamped =
       action.type === "addItem" || action.type === "addItems"
@@ -2448,20 +2483,7 @@ io.on("connection", (socket: Socket) => {
     room.state = tierListReducer(room.state, stamped);
     // Record tier moves (into a real tier, not the pool) for the 변경 이력 panel.
     if (action.type === "moveItem") {
-      const tier = room.state.tiers.find((t) => t.id === action.targetListId);
-      const item = room.state.items[action.itemId];
-      if (tier && item) {
-        room.history.unshift({
-          id: crypto.randomUUID(),
-          actor: name,
-          actorId: authedUser.id,
-          itemName: item.name,
-          toLabel: tier.label,
-          toColor: tier.color,
-          ts: Date.now(),
-        });
-        room.history = room.history.slice(0, 20);
-      }
+      recordHistory(room, action.itemId, moveFrom, action.targetListId, name, authedUser.id);
     }
     broadcast(io, room);
   });

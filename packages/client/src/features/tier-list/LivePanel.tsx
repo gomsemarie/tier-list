@@ -193,7 +193,8 @@ export function LivePanel({
                   {actor.slice(0, 1)}
                 </span>
                 <div className="flex-1 text-[12px] text-[#C4C8D2]">
-                  <b className="text-[#A4AAB6]">{actor}</b> {h.itemName} →{" "}
+                  <b className="text-[#A4AAB6]">{actor}</b> {h.itemName}{" "}
+                  {h.fromLabel && <span className="text-[#6A707E]">{h.fromLabel} </span>}→{" "}
                   <span className="font-bold" style={{ color: h.toColor }}>
                     {h.toLabel}
                   </span>

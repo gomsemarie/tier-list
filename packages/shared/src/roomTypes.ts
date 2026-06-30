@@ -84,6 +84,8 @@ export type ChangeEntry = {
   /** Stable account id of the mover — lets the UI show their *current* nickname. */
   actorId?: string;
   itemName: string;
+  /** Source tier label the item moved from ("미배치" if it was unplaced). */
+  fromLabel?: string;
   toLabel: string;
   toColor: string;
   ts: number;

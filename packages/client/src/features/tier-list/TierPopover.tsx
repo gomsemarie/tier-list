@@ -384,7 +384,8 @@ export function TierPopover({
                 <div key={h.id} className="flex items-center gap-2 py-[3px] text-[11px]">
                   <span className="size-[5px] shrink-0 rounded-full" style={{ background: h.toColor }} />
                   <span className="flex-1 truncate text-[#C4C8D2]">
-                    <b className="text-[#A4AAB6]">{actor}</b> →{" "}
+                    <b className="text-[#A4AAB6]">{actor}</b>{" "}
+                    {h.fromLabel && <span className="text-[#6A707E]">{h.fromLabel} </span>}→{" "}
                     <span className="font-bold" style={{ color: h.toColor }}>
                       {h.toLabel}
                     </span>

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-/** One item to scatter: name (+ image optional), and a 0–1 "lowness" weight. */
-export type AttackItem = { src: string | null; name: string; weight: number };
+import { ARCADE, PIXEL, DuelTitle, RetroBackdrop, type AttackItem } from "./duelChrome";
+
+export type { AttackItem };
 
 type AttackEffectProps = {
   attackKey: number;
@@ -14,6 +15,8 @@ type AttackEffectProps = {
   perStack?: number;
   /** Solo practice: the bot reflects immediately — shorten the post-result hold. */
   quick?: boolean;
+  /** Solo practice: not under attack → calm backdrop instead of the red strobe. */
+  calm?: boolean;
   /** Reflect the attack back; `escalate` = inner zone (level +1), else same level. */
   onParry?: (escalate: boolean) => void;
   /** Called once when this player gets hit (parry missed) — ends the rally. */
@@ -22,20 +25,10 @@ type AttackEffectProps = {
   items?: AttackItem[];
 };
 
-const ARCADE = "'Press Start 2P','Galmuri11',monospace";
-const PIXEL = "'Galmuri11','Noto Sans KR',sans-serif";
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
-
-function hueOf(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
-  return ((h % 360) + 360) % 360;
-}
-
 type Phase = "pending" | "reflect" | "parry" | "miss" | "hit";
 
 /** Full-screen DUEL!! effect with a parry mini-game (티어 결정전 연습/실전 공용). */
-export function AttackEffect({ attackKey, by, parryable = false, level = 0, perStack = 0.1, quick = false, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
+export function AttackEffect({ attackKey, by, parryable = false, level = 0, perStack = 0.1, quick = false, calm = false, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
   const [phase, setPhase] = useState<Phase>(parryable ? "pending" : "hit");
   const posRef = useRef(0);
   const markerRef = useRef<HTMLDivElement>(null);
@@ -43,7 +36,6 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, perS
   const parriedRef = useRef(false);
 
   const success = phase === "reflect" || phase === "parry"; // both reflect back
-  const resolved = phase !== "pending";
 
   // Two zones, both reflect: the OUTER (wide) zone returns the attack at the same
   // difficulty; the inner narrow zone returns it one level harder. Only the inner
@@ -141,110 +133,14 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, perS
     return () => clearTimeout(t);
   }, [phase, success, quick, onDone]);
 
-  const floaters = useMemo(() => {
-    const src = items.length
-      ? items.slice(0, 120)
-      : Array.from({ length: 14 }, (_, i) => ({ src: null, name: `${i}`, weight: Math.random() }));
-    return src.map((it, i) => ({
-      key: i,
-      label: it.name.slice(0, 2),
-      style: {
-        position: "absolute",
-        left: `${rand(0, 86)}%`,
-        top: success ? `${rand(60, 90)}%` : `${rand(0, 74)}%`,
-        width: 36 + it.weight * 26,
-        height: 36 + it.weight * 26,
-        background: success ? "hsl(190,70%,55%)" : `hsl(${hueOf(it.name)},42%,46%)`,
-        imageRendering: "pixelated",
-        border: "3px solid #000",
-        display: "grid",
-        placeItems: "center",
-        fontFamily: PIXEL,
-        fontSize: 11,
-        fontWeight: 700,
-        color: "#fff",
-        textShadow: "1px 1px 0 #000",
-        "--dx": `${rand(-75, 75)}px`,
-        "--dy": success ? `${-rand(120, 340)}px` : `${rand(-75, 75)}px`,
-        "--rot": "0deg",
-        animation: `floatY ${success ? 0.9 : rand(0.45, 0.9)}s steps(${success ? 5 : 4}) ${rand(0, 0.2)}s infinite alternate`,
-      } as CSSProperties,
-    }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attackKey, success]);
-
-  const boom = useMemo(() => {
-    if (!resolved) return [];
-    return Array.from({ length: 18 }, (_, i) => {
-      const a = (i / 18) * 6.283;
-      const d = 90 + Math.random() * 130;
-      return {
-        key: i,
-        style: {
-          position: "absolute",
-          left: "50%",
-          top: "42%",
-          width: 14,
-          height: 14,
-          background: success ? (i % 2 ? "#22D3EE" : "#fff") : i % 3 ? "#FF3B30" : "#FDE047",
-          imageRendering: "pixelated",
-          "--bx": `${Math.cos(a) * d}px`,
-          "--by": `${Math.sin(a) * d}px`,
-          animation: `starBurst 1s steps(6) ${Math.random() * 0.2}s forwards`,
-        } as CSSProperties,
-      };
-    });
-  }, [resolved, success]);
-
-  const vig = success ? "rgba(0,120,160,.85)" : "rgba(110,0,0,.85)";
-
-  const atkTitle = (
-    <div className="relative text-center" style={{ animation: "glitch .14s steps(2) infinite" }}>
-      <div className="relative inline-block">
-        <div className="absolute inset-x-0 top-0" style={{ fontFamily: ARCADE, fontSize: 44, color: "#FF2D6A", transform: "translate(-4px,0)" }}>
-          DUEL!!
-        </div>
-        <div className="absolute inset-x-0 top-0" style={{ fontFamily: ARCADE, fontSize: 44, color: "#22D3EE", transform: "translate(4px,0)" }}>
-          DUEL!!
-        </div>
-        <div className="relative" style={{ fontFamily: ARCADE, fontSize: 44, color: "#fff", textShadow: "5px 5px 0 #000" }}>
-          DUEL!!
-        </div>
-      </div>
-    </div>
-  );
-
   return (
     <div className="fixed inset-0 z-[100] overflow-hidden">
-      <div className="pointer-events-none absolute -inset-12" style={{ animation: success ? undefined : "atkShake .22s linear infinite" }}>
-        {success ? (
-          <div
-            className="absolute inset-0"
-            style={{ background: "radial-gradient(circle at 50% 42%, rgba(34,211,238,.30), rgba(7,14,20,.78) 70%)" }}
-          />
-        ) : (
-          <>
-            <div className="absolute inset-0" style={{ background: "#FF281C", animation: "atkFlash .16s linear infinite" }} />
-            <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 220px 60px ${vig}` }} />
-          </>
-        )}
-      </div>
-
-      <div className="pointer-events-none absolute inset-0">
-        {!success && floaters.map((f) => (
-          <span key={f.key} style={f.style}>
-            {f.label}
-          </span>
-        ))}
-        {boom.map((b) => (
-          <span key={`b${b.key}`} style={b.style} />
-        ))}
-      </div>
+      <RetroBackdrop phase={success ? "win" : phase === "pending" ? "play" : "lose"} items={items} seed={attackKey} calm={calm} />
 
       <div className="grid h-full place-items-center">
         {phase === "pending" ? (
           <div className="flex flex-col items-center gap-6 select-none">
-            {atkTitle}
+            <DuelTitle />
             <div className="-mt-3" style={{ fontFamily: PIXEL, fontSize: 15, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>
               {by}님의 연습 결투 신청!
             </div>
@@ -293,7 +189,7 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, perS
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3 select-none">
-            {atkTitle}
+            <DuelTitle />
             <div style={{ fontFamily: PIXEL, fontSize: 18, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>{by}에게 한 방 먹었습니다!</div>
             {phase === "miss" && (
               <div style={{ fontFamily: ARCADE, fontSize: 16, color: "#FF6B5A", textShadow: "2px 2px 0 #000" }}>GUARD BREAK</div>

@@ -306,6 +306,7 @@ export function TierListPage() {
     parryable: boolean;
     level?: number;
     quick?: boolean;
+    calm?: boolean;
     onParry: (escalate: boolean) => void;
     onHit: () => void;
     onDone: () => void;
@@ -320,6 +321,8 @@ export function TierListPage() {
         level={o.level}
         perStack={perStack}
         quick={o.quick}
+        calm={o.calm}
+        items={attackItems()}
         onParry={o.onParry}
         onHit={o.onHit}
         onDone={o.onDone}
@@ -333,6 +336,7 @@ export function TierListPage() {
         level={o.level}
         perStack={perStack}
         quick={o.quick}
+        calm={o.calm}
         items={attackItems()}
         onParry={o.onParry}
         onHit={o.onHit}
@@ -920,6 +924,7 @@ export function TierListPage() {
           parryable: true,
           level: solo.level,
           quick: true,
+          calm: true,
           onParry: () => {
             soloParried.current = true;
           },

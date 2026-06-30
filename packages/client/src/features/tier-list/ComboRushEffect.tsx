@@ -1,7 +1,9 @@
 /* Phaser's lazy-loaded plain-object scene is untyped here — `this` is the live
    Scene and the API surface is `any`. Scoped to this file only. */
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-this-alias */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { ARCADE, PIXEL, DuelTitle, RetroBackdrop, RetroSplash, type AttackItem } from "./duelChrome";
 
 type ComboRushEffectProps = {
   attackKey: number;
@@ -13,6 +15,10 @@ type ComboRushEffectProps = {
   perStack?: number;
   /** Solo practice: the bot reflects immediately — shorten the post-result hold. */
   quick?: boolean;
+  /** Solo practice: not under attack → calm backdrop instead of the red strobe. */
+  calm?: boolean;
+  /** Items scattered as retro shrapnel in the backdrop. */
+  items?: AttackItem[];
   /** Completed the combo in time → reflect (escalate). */
   onParry?: (escalate: boolean) => void;
   /** Ran out of time → you're hit. */
@@ -20,13 +26,12 @@ type ComboRushEffectProps = {
   onDone: () => void;
 };
 
-// Logical design size; the canvas renders at `ss`× this for crisp text on HiDPI.
+// Phaser canvas holds ONLY the game (arrows + timer + pads); the retro chrome
+// (DUEL!! title, vignette, win/lose splash) is shared React — see duelChrome.
 const VW = 460;
-const VH = 320;
+const VH = 280;
 const DIRS = ["U", "D", "L", "R"] as const;
 
-// lucide arrow icon path data (ArrowUp / Down / Left / Right) — drawn as proper
-// icons (rasterized SVG textures), tinted per progress state.
 const ARROW_PATHS: Record<string, string> = {
   U: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
   D: '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
@@ -35,38 +40,27 @@ const ARROW_PATHS: Record<string, string> = {
 };
 // Per-state arrow colors. The Canvas renderer can't tint images, so we bake the
 // color into separate textures and swap with setTexture: d=대기, w=현재, g=통과, r=오답.
-const ARROW_COLORS: Record<string, string> = {
-  d: "#5a6070",
-  w: "#ffffff",
-  g: "#4ade80",
-  r: "#f87171",
-};
+const ARROW_COLORS: Record<string, string> = { d: "#5a6070", w: "#ffffff", g: "#4ade80", r: "#f87171" };
 function arrowSvgUri(dir: string, color: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ARROW_PATHS[dir]}</svg>`;
-  // Phaser's loader decodes data URIs as base64 (atob), so it MUST be base64 —
-  // a URL-encoded URI throws InvalidCharacterError. The SVG is ASCII, so btoa is safe.
+  // Phaser's loader decodes data URIs as base64 (atob); a URL-encoded URI throws.
   return "data:image/svg+xml;base64," + btoa(svg);
 }
 
-/**
- * Build a plain-object Phaser scene (no `extends`, so Phaser can be lazy-loaded).
- * `ss` = supersample factor: everything is sized × `ss` and the FIT scaler
- * downscales it, so text/icons stay sharp on high-DPI screens.
- */
-function makeComboScene(ss: number, p: { level: number; perStack: number; by: string; onResult: (k: "parry" | "hit") => void }) {
+function makeComboScene(ss: number, p: { level: number; perStack: number; onResult: (k: "parry" | "hit") => void }) {
   const lv = Math.max(0, Math.floor(p.level));
-  const N = Math.min(10, 3 + lv); // combo length grows with difficulty
-  const T = Math.max(800, 2600 / Math.pow(1 + p.perStack, lv)); // total ms (철벽 ½ → more time)
+  const N = Math.min(10, 3 + lv);
+  const T = Math.max(800, 2600 / Math.pow(1 + p.perStack, lv));
   const W = VW * ss;
-  const u = (n: number) => n * ss; // logical px → device px
+  const u = (n: number) => n * ss;
   const font = (n: number) => `${n * ss}px`;
-  const ICON = Math.round(34 * ss); // arrow texture raster size (device px)
+  const ICON = Math.round(34 * ss);
 
   const RING_X = W / 2;
-  const RING_Y = u(178);
+  const RING_Y = u(132);
   const RING_R = u(34);
   const RING_W = u(7);
-  const ARROW_Y = u(96);
+  const ARROW_Y = u(54);
 
   return {
     key: "combo",
@@ -82,55 +76,38 @@ function makeComboScene(ss: number, p: { level: number; perStack: number; by: st
       s.remaining = T;
       s.done = false;
 
-      s.add.text(W / 2, u(26), `${p.by}의 공격!`, { fontFamily: "sans-serif", fontSize: font(16), color: "#F5B942", fontStyle: "bold" }).setOrigin(0.5);
-      s.add.text(W / 2, u(48), "화살표 순서대로! (틀리면 처음부터)", { fontFamily: "sans-serif", fontSize: font(11), color: "#9AA0AD" }).setOrigin(0.5);
-
-      // --- combo arrows (lucide icon textures, recolored per progress) ---
       const gap = Math.min(u(46), (W - u(48)) / N);
       const startX = W / 2 - (gap * (N - 1)) / 2;
       s.arrows = s.seq.map((d: string, i: number) => s.add.image(startX + i * gap, ARROW_Y, `arr_${d}_d`).setOrigin(0.5));
       s.drawArrows = () => {
         s.arrows.forEach((img: any, i: number) => {
-          const c = i < s.idx ? "g" : i === s.idx ? "w" : "d"; // 통과/현재/대기
+          const c = i < s.idx ? "g" : i === s.idx ? "w" : "d";
           img.setTexture(`arr_${s.seq[i]}_${c}`);
           img.setScale(i === s.idx ? 1.25 : 1);
         });
       };
       s.drawArrows();
 
-      // Retro pixel burst (square shrapnel, 8-bit palette) — green on hit, red on miss.
+      // Retro pixel burst (square shrapnel) — green on hit, red on miss.
       const GREEN = [0x4ade80, 0x86efac, 0xbbf7d0, 0xffffff, 0x22d3ee];
       const RED = [0xf87171, 0xfca5a5, 0xfecaca, 0xffffff, 0xfb923c];
       s.burst = (bx: number, by: number, pal: number[]) => {
-        const n = 12;
-        for (let i = 0; i < n; i++) {
-          const ang = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+        for (let i = 0; i < 12; i++) {
+          const ang = (i / 12) * Math.PI * 2 + Math.random() * 0.5;
           const dist = u(18) + Math.random() * u(30);
           const sz = u(4) + Math.floor(Math.random() * u(4));
           const sq = s.add.rectangle(bx, by, sz, sz, pal[Math.floor(Math.random() * pal.length)]).setAngle(Math.floor(Math.random() * 4) * 45);
-          s.tweens.add({
-            targets: sq,
-            x: bx + Math.cos(ang) * dist,
-            y: by + Math.sin(ang) * dist,
-            alpha: 0,
-            scale: 0.2,
-            angle: sq.angle + 90,
-            duration: 320 + Math.random() * 200,
-            ease: "Cubic.easeOut",
-            onComplete: () => sq.destroy(),
-          });
+          s.tweens.add({ targets: sq, x: bx + Math.cos(ang) * dist, y: by + Math.sin(ang) * dist, alpha: 0, scale: 0.2, angle: sq.angle + 90, duration: 320 + Math.random() * 200, ease: "Cubic.easeOut", onComplete: () => sq.destroy() });
         }
       };
 
-      // --- circular countdown timer ---
       s.timerG = s.add.graphics();
       s.timeText = s.add.text(RING_X, RING_Y, "", { fontFamily: "sans-serif", fontSize: font(15), color: "#EDEAE2", fontStyle: "bold" }).setOrigin(0.5);
-      s.fb = s.add.text(W / 2, u(236), "", { fontFamily: "sans-serif", fontSize: font(20), fontStyle: "bold" }).setOrigin(0.5);
+      s.fb = s.add.text(W / 2, u(190), "", { fontFamily: "sans-serif", fontSize: font(15), fontStyle: "bold" }).setOrigin(0.5);
 
       const resolve = (kind: "parry" | "hit") => {
         if (s.done) return;
         s.done = true;
-        s.fb.setText(kind === "parry" ? "✓ 반격!" : "✕ 피격").setColor(kind === "parry" ? "#4ADE80" : "#F87171");
         p.onResult(kind);
       };
       s.resolve = resolve;
@@ -138,22 +115,21 @@ function makeComboScene(ss: number, p: { level: number; perStack: number; by: st
       const press = (d: string) => {
         if (s.done) return;
         if (d === s.seq[s.idx]) {
-          s.burst(startX + s.idx * gap, ARROW_Y, GREEN); // 정답 → 녹색 파티클
+          s.burst(startX + s.idx * gap, ARROW_Y, GREEN);
           s.idx += 1;
           s.drawArrows();
           if (s.idx >= N) resolve("parry");
         } else {
-          // 틀림: 통과했던 화살표를 붉게 번쩍 → "처음부터"임을 인지시킴.
           const wrong = s.idx;
           s.arrows.forEach((img: any, i: number) => {
             if (i <= wrong) {
-              img.setTexture(`arr_${s.seq[i]}_r`); // 붉게
+              img.setTexture(`arr_${s.seq[i]}_r`);
               img.setScale(1);
             }
           });
           s.burst(startX + wrong * gap, ARROW_Y, RED);
           s.cameras.main.shake(130, 0.015);
-          s.fb.setText("✕ 틀림 — 처음부터!").setColor("#F87171");
+          s.fb.setText("✕ 처음부터!").setColor("#F87171");
           s.idx = 0;
           s.time.delayedCall(320, () => {
             if (!s.done) {
@@ -170,12 +146,9 @@ function makeComboScene(ss: number, p: { level: number; perStack: number; by: st
       kb.on("keydown-LEFT", () => press("L"));
       kb.on("keydown-RIGHT", () => press("R"));
 
-      // --- on-screen pads (touch / click): rounded box + arrow icon ---
-      const padY = u(284);
-      const padW = u(56);
-      const padH = u(42);
+      const padY = u(244);
       const pad = (x: number, d: string) => {
-        const r = s.add.rectangle(x, padY, padW, padH, 0x1b1f27).setStrokeStyle(u(1), 0x2a303c).setInteractive({ useHandCursor: true });
+        const r = s.add.rectangle(x, padY, u(56), u(42), 0x1b1f27).setStrokeStyle(u(1), 0x2a303c).setInteractive({ useHandCursor: true });
         s.add.image(x, padY, `arr_${d}_w`).setScale(0.62);
         r.on("pointerdown", () => press(d));
       };
@@ -209,13 +182,14 @@ function makeComboScene(ss: number, p: { level: number; perStack: number; by: st
   };
 }
 
-/** Phaser arrow-combo parry mini-game — the "콤보 러시" alternative to the timing bar. */
-export function ComboRushEffect({ attackKey, by, parryable = true, level = 0, perStack = 0.1, quick = false, onParry, onHit, onDone }: ComboRushEffectProps) {
+/** Phaser arrow-combo parry mini-game wrapped in the shared retro duel chrome. */
+export function ComboRushEffect({ attackKey, by, parryable = true, level = 0, perStack = 0.1, quick = false, calm = false, items = [], onParry, onHit, onDone }: ComboRushEffectProps) {
   const ref = useRef<HTMLDivElement>(null);
   const doneRef = useRef(false);
+  const [phase, setPhase] = useState<"play" | "win" | "lose">(parryable ? "play" : "lose");
+  const lv = Math.max(0, Math.floor(level));
 
   useEffect(() => {
-    // Non-parryable (rare for combo) → brief beat, then dismiss.
     if (!parryable) {
       const t = setTimeout(onDone, 1100);
       return () => clearTimeout(t);
@@ -225,6 +199,7 @@ export function ComboRushEffect({ attackKey, by, parryable = true, level = 0, pe
     const finish = (kind: "parry" | "hit") => {
       if (doneRef.current) return;
       doneRef.current = true;
+      setPhase(kind === "parry" ? "win" : "lose");
       if (kind === "parry") onParry?.(true);
       else onHit?.();
       setTimeout(() => !cancelled && onDone(), quick ? (kind === "parry" ? 320 : 700) : 650);
@@ -232,32 +207,46 @@ export function ComboRushEffect({ attackKey, by, parryable = true, level = 0, pe
     (async () => {
       const Phaser = (await import("phaser")).default;
       if (cancelled || !ref.current) return;
-      // Render at devicePixelRatio (min 2×) so text/icons aren't blurry on HiDPI.
       const ss = Math.min(3, Math.max(2, Math.round(window.devicePixelRatio || 1)));
       game = new Phaser.Game({
-        type: Phaser.CANVAS, // canvas (not WebGL) — avoids context churn across short rounds
+        type: Phaser.CANVAS,
         width: VW * ss,
         height: VH * ss,
         parent: ref.current,
         transparent: true,
         scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
         render: { antialias: true, roundPixels: false },
-        scene: makeComboScene(ss, { level, perStack, by, onResult: finish }),
+        scene: makeComboScene(ss, { level, perStack, onResult: finish }),
       });
     })();
     return () => {
       cancelled = true;
       if (game) game.destroy(true);
     };
-  }, [attackKey, parryable, level, perStack, quick, by, onParry, onHit, onDone]);
+  }, [attackKey, parryable, level, perStack, quick, onParry, onHit, onDone]);
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/75" onClick={(e) => e.stopPropagation()}>
-      {parryable ? (
-        <div ref={ref} className="h-[320px] w-[460px] max-w-[92vw]" />
-      ) : (
-        <div className="font-display text-[40px] text-[#F87171]">DUEL!!</div>
-      )}
+    <div className="fixed inset-0 z-[100] overflow-hidden">
+      <RetroBackdrop phase={phase} items={items} seed={attackKey} calm={calm} />
+      <div className="grid h-full place-items-center">
+        {/* Keep the play chrome (and Phaser canvas) mounted; hide it under the splash. */}
+        <div className="flex flex-col items-center gap-3 select-none" style={{ display: phase === "play" ? undefined : "none" }}>
+          <DuelTitle />
+          <div className="-mt-2" style={{ fontFamily: PIXEL, fontSize: 15, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>
+            {by}님의 공격!
+          </div>
+          <div className="flex items-center justify-center gap-2">
+            <span style={{ fontFamily: ARCADE, fontSize: 22, color: "#FDE047", textShadow: "3px 3px 0 #000,0 0 14px rgba(253,224,71,.7)" }}>COMBO!</span>
+            {lv > 0 && <span style={{ fontFamily: ARCADE, fontSize: 12, color: "#FF6B5A", textShadow: "2px 2px 0 #000" }}>LV.{lv}</span>}
+          </div>
+          <div style={{ fontFamily: PIXEL, fontSize: 13, color: "#fff", textShadow: "1px 1px 0 #000" }}>
+            <span style={{ color: "#FDE047" }}>화살표 순서대로!</span> · <span style={{ color: "#FF8A7A" }}>틀리면 처음부터</span>
+          </div>
+          <div ref={ref} className="h-[280px] w-[460px] max-w-[92vw]" style={{ pointerEvents: "auto" }} />
+          <div style={{ fontFamily: PIXEL, fontSize: 11, color: "#9AD8E8", animation: "blink 1s steps(1) infinite" }}>방향키 또는 탭</div>
+        </div>
+        {phase !== "play" && <RetroSplash phase={phase} by={by} sub={phase === "win" ? "콤보 성공 — 상대 차례!" : undefined} />}
+      </div>
     </div>
   );
 }

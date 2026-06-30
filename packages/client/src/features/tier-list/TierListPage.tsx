@@ -7,20 +7,24 @@ import {
   ChevronDown,
   ChevronUp,
   Gamepad2,
+  Heart,
   LogOut,
   Palette,
   Plus,
   RotateCcw,
   Search as SearchIcon,
+  Shield,
   Target,
   Trophy,
   UserCog,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 
 import { POOL_ID, TIER_COLORS } from "@tier-list/shared";
 import type { DuelGameMode, Item, Member } from "@tier-list/shared";
 import { checkDuplicate } from "@/lib/similarity";
+import { ARCADE, PIXEL } from "./duelChrome";
 import { isCardData, isListData } from "./dnd";
 import { AccountDialog } from "./AccountDialog";
 import { AttackEffect, type AttackItem } from "./AttackEffect";
@@ -79,15 +83,21 @@ export function TierListPage() {
   // difficulty climbs by 1 every successful parry until you miss.
   const [solo, setSolo] = useState<{ mode: DuelGameMode; level: number; key: number } | null>(null);
   const [soloEnd, setSoloEnd] = useState<{ mode: DuelGameMode; level: number } | null>(null);
-  const [soloNote, setSoloNote] = useState<string | null>(null);
+  const [soloNote, setSoloNote] = useState<{ Icon: LucideIcon; title: string; sub: string; color: string } | null>(null);
   const soloParried = useRef(false);
   const soloLives = useRef(0); // 목숨(life): 미스를 버틸 수 있는 횟수
   const soloAbsorb = useRef(0); // 방어(bulwark): 난이도 상승을 흡수하는 횟수
   const noteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const flashSoloNote = (t: string) => {
-    setSoloNote(t);
+  // A skill fired (방어 흡수 / 목숨 부활): pause the loop, show a telegraph, then
+  // resume the same level — so the player actually registers what happened.
+  const soloTelegraph = (note: { Icon: LucideIcon; title: string; sub: string; color: string }, mode: DuelGameMode, level: number) => {
+    setSolo(null);
+    setSoloNote(note);
     if (noteTimer.current) clearTimeout(noteTimer.current);
-    noteTimer.current = setTimeout(() => setSoloNote(null), 1200);
+    noteTimer.current = setTimeout(() => {
+      setSoloNote(null);
+      setSolo({ mode, level, key: Date.now() });
+    }, 1050);
   };
   const startSolo = (mode: DuelGameMode) => {
     // 내 장착 전투 스킬을 솔로 연습에도 반영(half는 renderDuel의 perStack로 적용됨).
@@ -932,29 +942,37 @@ export function TierListPage() {
             soloParried.current = false;
           },
           onDone: () => {
+            const cur = solo;
             if (soloParried.current) {
               soloParried.current = false;
-              if (soloAbsorb.current > 0) {
+              if (soloAbsorb.current > 0 && cur) {
                 soloAbsorb.current -= 1;
-                flashSoloNote("🛡️ 방어 — 난이도 상승 흡수");
-                setSolo((s) => (s ? { ...s, key: s.key + 1 } : null)); // 레벨 유지
+                soloTelegraph({ Icon: Shield, title: "GUARD", sub: "방어 발동 — 난이도 유지", color: "#67E8F9" }, cur.mode, cur.level);
               } else {
-                setSolo((s) => (s ? { ...s, level: s.level + 1, key: s.key + 1 } : null));
+                setSolo((s) => (s ? { ...s, level: s.level + 1, key: s.key + 1 } : null)); // 빠르게 다음 난이도
               }
-            } else if (soloLives.current > 0) {
+            } else if (soloLives.current > 0 && cur) {
               soloLives.current -= 1;
-              flashSoloNote("❤️ 목숨 소모 — 버팀!");
-              setSolo((s) => (s ? { ...s, key: s.key + 1 } : null)); // 같은 레벨로 계속
+              soloTelegraph({ Icon: Heart, title: "REVIVE", sub: "목숨 1 소모 — 부활", color: "#FF6B8A" }, cur.mode, cur.level);
             } else {
-              setSoloEnd(solo ? { mode: solo.mode, level: solo.level } : null);
+              setSoloEnd(cur ? { mode: cur.mode, level: cur.level } : null);
               setSolo(null);
             }
           },
         })}
 
       {soloNote && (
-        <div className="fixed top-[14%] left-1/2 z-[97] -translate-x-1/2 rounded-full bg-black/85 px-4 py-1.5 text-[13px] font-bold text-white shadow-[0_6px_20px_rgba(0,0,0,.5)]">
-          {soloNote}
+        <div className="pointer-events-none fixed inset-0 z-[110] grid place-items-center select-none">
+          <div className="flex flex-col items-center gap-2.5" style={{ animation: "slam .4s steps(4) both" }}>
+            <div
+              className="grid size-[78px] place-items-center"
+              style={{ background: "#0E1117", border: `4px solid ${soloNote.color}`, boxShadow: `5px 5px 0 #000, 0 0 24px ${soloNote.color}` }}
+            >
+              <soloNote.Icon className="size-9" style={{ color: soloNote.color }} strokeWidth={2.5} fill={soloNote.color} fillOpacity={0.18} />
+            </div>
+            <div style={{ fontFamily: ARCADE, fontSize: 20, color: soloNote.color, textShadow: `4px 4px 0 #000, 0 0 16px ${soloNote.color}` }}>{soloNote.title}</div>
+            <div style={{ fontFamily: PIXEL, fontSize: 12, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{soloNote.sub}</div>
+          </div>
         </div>
       )}
 
@@ -964,27 +982,32 @@ export function TierListPage() {
           onClick={() => setSoloEnd(null)}
         >
           <div
-            className="rounded-xl border border-border bg-card px-7 py-6 text-center shadow-[0_24px_64px_rgba(0,0,0,.6)]"
+            className="px-9 py-7 text-center"
+            style={{ background: "#0E1117", border: "4px solid #6366F1", boxShadow: "6px 6px 0 #000, 0 0 28px rgba(99,102,241,.5)", animation: "slam .4s steps(4) both" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-[13px] font-bold text-muted-foreground">
-              {soloEnd.mode === "combo" ? "콤보 러시" : "타이밍"} 연습 종료
+            <div style={{ fontFamily: PIXEL, fontSize: 12, fontWeight: 700, color: "#9AD8E8", textShadow: "1px 1px 0 #000" }}>
+              {soloEnd.mode === "combo" ? "COMBO RUSH" : "TIMING"}
             </div>
-            <div className="mt-1 text-[30px] font-extrabold text-indigo">Lv {soloEnd.level} 도달</div>
-            <div className="mt-5 flex gap-2">
+            <div className="mt-1.5 flex items-baseline justify-center gap-1.5">
+              <span style={{ fontFamily: ARCADE, fontSize: 16, color: "#A5B4FC", textShadow: "2px 2px 0 #000" }}>LV.</span>
+              <span style={{ fontFamily: ARCADE, fontSize: 40, color: "#fff", textShadow: "4px 4px 0 #000, 0 0 18px rgba(165,180,252,.7)" }}>{soloEnd.level}</span>
+            </div>
+            <div className="mt-1.5" style={{ fontFamily: PIXEL, fontSize: 12, color: "#FFD0C8", textShadow: "1px 1px 0 #000" }}>여기까지 도달!</div>
+            <div className="mt-5 flex gap-2.5">
               <button
                 type="button"
                 onClick={() => startSolo(soloEnd.mode)}
-                className="h-9 flex-1 rounded-md bg-indigo px-4 text-[13px] font-bold text-white"
+                style={{ fontFamily: ARCADE, fontSize: 13, color: "#06121A", background: "#22D3EE", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 18px", cursor: "pointer" }}
               >
-                다시
+                RETRY
               </button>
               <button
                 type="button"
                 onClick={() => setSoloEnd(null)}
-                className="h-9 rounded-md border border-border bg-card px-4 text-[13px] font-semibold text-foreground"
+                style={{ fontFamily: ARCADE, fontSize: 13, color: "#C4C8D2", background: "#171B22", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 18px", cursor: "pointer" }}
               >
-                닫기
+                EXIT
               </button>
             </div>
           </div>

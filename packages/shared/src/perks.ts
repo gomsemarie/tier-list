@@ -17,15 +17,22 @@ export function isSpecBuff(id: string): id is Exclude<SpecBuffId, ""> {
   return SPEC_BUFFS.some((b) => b.id === id);
 }
 
-/** Combat buff a fighter brings into a 결정전 (default "" none). Pools to the team. */
-export type CombatBuffId = "" | "bulwark" | "surge" | "life";
-export const COMBAT_BUFFS: { id: Exclude<CombatBuffId, "">; name: string; desc: string }[] = [
+/** Combat buff a fighter brings into a 결정전 (default "" none). Pools to the team.
+ *  `admin` buffs are per-person (not pooled) and only equippable by admins. */
+export type CombatBuffId = "" | "bulwark" | "surge" | "life" | "double" | "half";
+export const COMBAT_BUFFS: { id: Exclude<CombatBuffId, "">; name: string; desc: string; admin?: boolean }[] = [
   { id: "bulwark", name: "방어", desc: "결투 1명당 아군 난이도 상승 흡수 +1회" },
   { id: "surge", name: "공격", desc: "결투 1명당 상대 시작 난이도 +1" },
   { id: "life", name: "목숨 +1", desc: "결투 1명당 팀 목숨 +1 (탈락 1회를 버팀)" },
+  { id: "double", name: "강타 ×2", desc: "[관리자] 내가 상대에게 더하는 난이도 상승을 2배로 적용합니다.", admin: true },
+  { id: "half", name: "철벽 ½", desc: "[관리자] 나에게 적용되는 난이도 상승률을 절반(10%→5% 복리)으로 줄입니다.", admin: true },
 ];
 export function isCombatBuff(id: string): id is Exclude<CombatBuffId, ""> {
   return COMBAT_BUFFS.some((b) => b.id === id);
+}
+/** True for admin-only combat buffs (cannot be equipped by regular users). */
+export function isAdminCombatBuff(id: string): boolean {
+  return COMBAT_BUFFS.some((b) => b.id === id && b.admin === true);
 }
 export type Rarity = "common" | "rare" | "epic" | "legendary";
 

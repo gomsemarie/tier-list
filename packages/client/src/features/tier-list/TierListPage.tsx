@@ -18,6 +18,7 @@ import {
 
 import { POOL_ID, TIER_COLORS } from "@tier-list/shared";
 import type { Item, Member } from "@tier-list/shared";
+import { checkDuplicate } from "@/lib/similarity";
 import { isCardData, isListData } from "./dnd";
 import { AccountDialog } from "./AccountDialog";
 import { AttackEffect, type AttackItem } from "./AttackEffect";
@@ -221,9 +222,26 @@ export function TierListPage() {
     state.tiers.forEach((t, i) => controller.updateTier(t.id, { color: TIER_COLORS[i % TIER_COLORS.length] }));
   }
 
+  /** Duplicate-name gate: block near-identical names, warn on similar ones.
+   *  Returns true when it's OK to add `name`. */
+  function guardAdd(name: string): boolean {
+    const v = checkDuplicate(name, Object.values(state.items));
+    if (v.kind === "block") {
+      window.alert(`'${v.match.name}'와(과) 같거나 매우 비슷해서 추가할 수 없어요.`);
+      return false;
+    }
+    if (v.kind === "warn") {
+      return window.confirm(
+        `'${v.match.name}'와(과) 비슷해요 (유사도 ${Math.round(v.score * 100)}%). 그래도 추가할까요?`,
+      );
+    }
+    return true;
+  }
+
   function quickAdd() {
     const n = draftName.trim();
     if (!n) return;
+    if (!guardAdd(n)) return;
     setDraftName("");
     setQuickSearch(n); // open the image picker for this name
   }
@@ -675,8 +693,12 @@ export function TierListPage() {
         <ItemFormDialog
           item={form.item}
           onSubmit={(name, imageUrl) => {
-            if (form.item) controller.updateItem(form.item.id, { name, imageUrl });
-            else controller.addItem(name, imageUrl);
+            if (form.item) {
+              controller.updateItem(form.item.id, { name, imageUrl });
+            } else {
+              if (!guardAdd(name)) return; // keep the dialog open to fix the name
+              controller.addItem(name, imageUrl);
+            }
             setForm(null);
           }}
           onDelete={
@@ -693,6 +715,7 @@ export function TierListPage() {
 
       {bulk && (
         <BulkAddDialog
+          existing={Object.values(state.items)}
           onSubmit={(entries) => {
             controller.addItems(entries);
             setBulk(false);
@@ -790,6 +813,7 @@ export function TierListPage() {
           by={room.attack.by}
           parryable={room.attack.parryable}
           level={room.attack.level}
+          perStack={room.authUser?.combatBuff === "half" ? 0.05 : 0.1}
           items={attackItems()}
           onParry={(escalate) => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, escalate)}
           onHit={() => room.attack?.byUserId && room.rallyHit(room.attack.byUserId)}

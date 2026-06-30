@@ -2,16 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ImageOff, Loader2, Plus, SkipForward } from "lucide-react";
 
+import type { Item } from "@tier-list/shared";
 import { type ImageCandidate } from "@/lib/imageSearch";
 import { imageSearchAllQuery, imageSearchQuery } from "@/lib/queries";
+import { checkDuplicate } from "@/lib/similarity";
 
 type BulkAddDialogProps = {
+  /** Current items — used to block/warn on duplicate names. */
+  existing: Item[];
   onSubmit: (entries: { name: string; imageUrl: string | null }[]) => void;
   onClose: () => void;
 };
 
 /** Paste names → optionally search/verify/pick an image for each → add them all. */
-export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
+export function BulkAddDialog({ existing, onSubmit, onClose }: BulkAddDialogProps) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [step, setStep] = useState<"names" | "images">("names");
@@ -26,8 +30,9 @@ export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // --- per-item image step ---
+  // --- per-item image step (iterates the screened `queue`, not raw `names`) ---
   const [idx, setIdx] = useState(0);
+  const [queue, setQueue] = useState<string[]>([]);
   const picks = useRef<(string | null)[]>([]);
   const [cands, setCands] = useState<ImageCandidate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,28 +50,58 @@ export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
     }
   }, [qc]);
 
+  /** Drop duplicate names (block) and confirm similar ones (warn), comparing
+   *  against existing items AND names already accepted in this batch. Returns
+   *  the names cleared to add, or null if the user canceled at the warning. */
+  const screen = (list: string[]): string[] | null => {
+    const pool: Item[] = [...existing];
+    const accepted: string[] = [];
+    const blocked: string[] = [];
+    const warned: string[] = [];
+    for (const name of list) {
+      const v = checkDuplicate(name, pool);
+      if (v.kind === "block") {
+        blocked.push(`${name} ≈ ${v.match.name}`);
+        continue;
+      }
+      if (v.kind === "warn") warned.push(`${name} ≈ ${v.match.name}`);
+      accepted.push(name);
+      pool.push({ id: `__new__${name}`, name } as Item); // catch in-batch dupes too
+    }
+    if (blocked.length) {
+      window.alert(`이미 같거나 매우 비슷한 항목이 있어 제외했어요:\n\n${blocked.join("\n")}`);
+    }
+    if (warned.length && !window.confirm(`비슷한 항목이 있어요. 그래도 추가할까요?\n\n${warned.join("\n")}`)) {
+      return null;
+    }
+    return accepted;
+  };
+
   const goImages = () => {
-    picks.current = names.map(() => null);
+    const q = screen(names);
+    if (!q || q.length === 0) return;
+    setQueue(q);
+    picks.current = q.map(() => null);
     setIdx(0);
     setStep("images");
-    void search(names[0]);
+    void search(q[0]);
   };
 
   const goto = (next: number) => {
     setIdx(next);
-    void search(names[next]);
+    void search(queue[next]);
   };
 
   const choose = (url: string | null) => {
     picks.current[idx] = url;
-    if (idx + 1 < names.length) goto(idx + 1);
-    else onSubmit(names.map((name, i) => ({ name, imageUrl: picks.current[i] ?? null })));
+    if (idx + 1 < queue.length) goto(idx + 1);
+    else onSubmit(queue.map((name, i) => ({ name, imageUrl: picks.current[i] ?? null })));
   };
 
   const loadMore = async () => {
     setMore(true);
     try {
-      const all = await qc.fetchQuery(imageSearchAllQuery(names[idx]));
+      const all = await qc.fetchQuery(imageSearchAllQuery(queue[idx]));
       setCands((cur) => {
         const seen = new Set(cur.map((c) => c.thumbnail));
         return [...cur, ...all.filter((c) => !seen.has(c.thumbnail))];
@@ -110,7 +145,10 @@ export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
               <button
                 type="button"
                 disabled={names.length === 0}
-                onClick={() => onSubmit(names.map((name) => ({ name, imageUrl: null })))}
+                onClick={() => {
+                  const q = screen(names);
+                  if (q && q.length) onSubmit(q.map((name) => ({ name, imageUrl: null })));
+                }}
                 className="h-10 flex-1 rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[13px] font-semibold text-[#C4C8D2] disabled:opacity-40"
               >
                 이미지 없이 추가
@@ -139,17 +177,17 @@ export function BulkAddDialog({ onSubmit, onClose }: BulkAddDialogProps) {
               </button>
               <div className="min-w-0 flex-1">
                 <div className="text-[11px] text-[#8A8F9C]">
-                  이미지 선택 {idx + 1} / {names.length}
+                  이미지 선택 {idx + 1} / {queue.length}
                 </div>
-                <div className="truncate text-[15px] font-extrabold text-[#EDEAE2]">{names[idx]}</div>
+                <div className="truncate text-[15px] font-extrabold text-[#EDEAE2]">{queue[idx]}</div>
               </div>
               <button
                 type="button"
                 onClick={() => choose(null)}
                 className="flex h-8 shrink-0 items-center gap-1.5 rounded-[6px] border border-[#2A303C] bg-[#171B22] px-2.5 text-[12px] font-semibold text-[#C4C8D2]"
               >
-                {idx + 1 < names.length ? <SkipForward className="size-3.5" /> : <ImageOff className="size-3.5" />}
-                {idx + 1 < names.length ? "건너뛰기" : "이미지 없이 완료"}
+                {idx + 1 < queue.length ? <SkipForward className="size-3.5" /> : <ImageOff className="size-3.5" />}
+                {idx + 1 < queue.length ? "건너뛰기" : "이미지 없이 완료"}
               </button>
             </div>
 

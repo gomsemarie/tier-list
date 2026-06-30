@@ -10,6 +10,8 @@ type AttackEffectProps = {
   parryable?: boolean;
   /** Relay difficulty 0–5 (faster marker, tighter inner zone). */
   level?: number;
+  /** Per-stack compound rate (0.1 = 10%; 0.05 for the admin 철벽 ½ skill). */
+  perStack?: number;
   /** Reflect the attack back; `escalate` = inner zone (level +1), else same level. */
   onParry?: (escalate: boolean) => void;
   /** Called once when this player gets hit (parry missed) — ends the rally. */
@@ -31,7 +33,7 @@ function hueOf(name: string): number {
 type Phase = "pending" | "reflect" | "parry" | "miss" | "hit";
 
 /** Full-screen DUEL!! effect with a parry mini-game (티어 결정전 연습/실전 공용). */
-export function AttackEffect({ attackKey, by, parryable = false, level = 0, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
+export function AttackEffect({ attackKey, by, parryable = false, level = 0, perStack = 0.1, onParry, onHit, onDone, items = [] }: AttackEffectProps) {
   const [phase, setPhase] = useState<Phase>(parryable ? "pending" : "hit");
   const posRef = useRef(0);
   const markerRef = useRef<HTMLDivElement>(null);
@@ -45,10 +47,11 @@ export function AttackEffect({ attackKey, by, parryable = false, level = 0, onPa
   // difficulty; the inner narrow zone returns it one level harder. Only the inner
   // zone ramps — narrower + faster each relay (consistent step). Miss → you're hit.
   const lv = Math.max(0, Math.floor(level)); // no cap — the rally must end
-  // Each relay: zones shrink to 90% of current (converging), marker speeds up
-  // 10% compounding. Asymptotic → eventually too hard, so the rally ends.
-  const shrink = Math.pow(0.9, lv);
-  const duration = Math.max(200, 1500 / Math.pow(1.1, lv));
+  // Each relay: zones shrink and the marker speeds up by `perStack` compounding
+  // (default 10%; the 철벽 ½ skill halves it to 5%). Asymptotic → eventually too
+  // hard, so the rally ends.
+  const shrink = Math.pow(1 - perStack, lv);
+  const duration = Math.max(200, 1500 / Math.pow(1 + perStack, lv));
   const reflectHalf = Math.max(0.6, 14 * shrink); // inner, % each side of center
   const blockHalf = Math.max(reflectHalf + 1, 28 * shrink); // outer (wider)
 

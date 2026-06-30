@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Ban, Camera, Dices, Heart, Shield, X, Zap, type LucideIcon } from "lucide-react";
+import { Ban, Camera, Dices, Heart, Shield, ShieldHalf, Swords, X, Zap, type LucideIcon } from "lucide-react";
 
 import { COMBAT_BUFFS, FRAMES, PERKS, RARITY_META, SC_STYLES, SPEC_BUFFS } from "@tier-list/shared";
 
@@ -10,6 +10,8 @@ const BUFF_ICON: Record<string, LucideIcon> = {
   surge: Zap,
   gamble: Dices,
   life: Heart,
+  double: Swords,
+  half: ShieldHalf,
 };
 import type { AuthUser, CodeInfo, IssueCodeResult, RedeemResult, UpdateResult } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
@@ -249,7 +251,10 @@ export function AccountDialog({
 
           <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 전투 버프 (결정전 결투)</label>
           <div className="mb-4 flex flex-wrap gap-1.5">
-            {[{ id: "", name: "없음", desc: "결투 시 팀에 버프를 주지 않습니다" }, ...COMBAT_BUFFS].map((b) => {
+            {[
+              { id: "", name: "없음", desc: "결투 시 팀에 버프를 주지 않습니다" },
+              ...COMBAT_BUFFS.filter((b) => !b.admin || user.isAdmin),
+            ].map((b) => {
               const equipped = (user.combatBuff ?? "") === b.id;
               const Icon = BUFF_ICON[b.id] ?? Ban;
               return (

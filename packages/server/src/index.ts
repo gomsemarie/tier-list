@@ -9,7 +9,7 @@ import {
   tierListReducer,
   type Action,
 } from "@tier-list/shared";
-import { perkById, rolePriority, VOTE_ABSTAIN, isSpecBuff, isCombatBuff } from "@tier-list/shared";
+import { perkById, rolePriority, VOTE_ABSTAIN, isSpecBuff, isCombatBuff, isAdminCombatBuff } from "@tier-list/shared";
 import type {
   AuthResult,
   AuthUser,
@@ -144,8 +144,9 @@ type DecisionState = {
     };
     /** Remaining 방어 absorb charges per side. */
     bulwarkLeft: { pro: number; con: number };
-    /** Remaining 목숨 reserve lives per side. */
-    reserveLives: { pro: number; con: number };
+    /** Remaining 목숨 reserve lives, per fighter (userId → lives). Only the exact
+     *  account that equipped 목숨 can spend a revive — never a teammate/opponent. */
+    reserveLives: Map<string, number>;
   };
   result?: { winner: DecisionSide; outcome: "moved" | "kept"; toTier: string | null; lockUntil?: number };
 };
@@ -200,6 +201,8 @@ const parryLevel = new Map<string, number>();
 const DECISION_SIGNUP_MS = 10_000; // recruit window
 const DECISION_BALANCE_MS = 10_000; // equalize-fighters window after signup (configurable)
 const DECISION_LOCK_MS = 60 * 60 * 1000; // challenger win → 1h tier lock
+const DECISION_KEEP_LOCK_MS = 10 * 60 * 1000; // defender win → 10min 현황 유지 잠금
+const DECISION_UNCONTESTED_LOCK_MS = 5 * 60 * 1000; // 결투 미성립(무산) → 5min 잠금
 const DECISION_CON_COOLDOWN_MS = 60_000; // defender win → 60s re-propose ban
 const DUEL_BAN_ON_LOSS_MS = 10_000; // KO'd fighter can't duel again for 10s
 const DECISION_RESULT_HOLD_MS = 6_000; // result card shown this long before clearing
@@ -971,7 +974,9 @@ function buildDecisionSnapshot(room: Room): DecisionSnapshot | null {
 function buffsView(room: Room, d: DecisionState, side: DecisionSide) {
   if (d.duel) {
     const b = d.duel.buffs[side];
-    return { ...b, bulwarkLeft: d.duel.bulwarkLeft[side], lifeLeft: d.duel.reserveLives[side] };
+    const alive = side === "pro" ? d.duel.proAlive : d.duel.conAlive;
+    const lifeLeft = alive.reduce((s, id) => s + (d.duel!.reserveLives.get(id) ?? 0), 0);
+    return { ...b, bulwarkLeft: d.duel.bulwarkLeft[side], lifeLeft };
   }
   const b = aggregateBuffs(room, d[side].fighters, d[side].spectators);
   return { ...b, bulwarkLeft: b.bulwark, lifeLeft: b.life };
@@ -1076,12 +1081,13 @@ function decisionCancel(io: Server, room: Room, why: string) {
       ts: Date.now(),
     });
     recordHistory(room, d.itemId, from, target, `${d.proposerName} (결정전 무산)`, d.proposerId);
-    const until = Date.now() + DECISION_LOCK_MS;
-    room.tierLocks.set(d.itemId, { tierId: target, until, dur: DECISION_LOCK_MS, reason: "decision" });
+    // 결투가 성립되지 않은 무산은 1시간이 아니라 5분만 고정한다.
+    const until = Date.now() + DECISION_UNCONTESTED_LOCK_MS;
+    room.tierLocks.set(d.itemId, { tierId: target, until, dur: DECISION_UNCONTESTED_LOCK_MS, reason: "decision" });
     d.result = { winner: "pro", outcome: "moved", toTier: target, lockUntil: until };
     pushMessage(
       room,
-      message("system", `결정전 무산(${why}) — 이의가 없어 '${itemName}'을(를) ${tierMeta(room, target).label} 티어로 이동·고정합니다.`, "action"),
+      message("system", `결정전 무산(${why}) — 이의가 없어 '${itemName}'을(를) ${tierMeta(room, target).label} 티어로 이동·고정합니다. (5분 고정)`, "action"),
     );
   } else {
     d.result = { winner: "con", outcome: "kept", toTier: null };
@@ -1158,6 +1164,13 @@ function startDecisionDuel(io: Server, room: Room) {
     pro: aggregateBuffs(room, d.pro.fighters, d.pro.spectators),
     con: aggregateBuffs(room, d.con.fighters, d.con.spectators),
   };
+  // 목숨 is per-fighter: only the exact account that equipped it gets a reserve
+  // life. Pooling per side would let a teammate spend someone else's 목숨.
+  const reserveLives = new Map<string, number>();
+  for (const id of [...d.pro.fighters, ...d.con.fighters]) {
+    const m = [...room.members.values()].find((x) => x.userId === id);
+    if (m?.combatBuff === "life") reserveLives.set(id, 1);
+  }
   d.duel = {
     pairs: [],
     results: [],
@@ -1169,7 +1182,7 @@ function startDecisionDuel(io: Server, room: Room) {
     debt: new Map(),
     buffs,
     bulwarkLeft: { pro: buffs.pro.bulwark, con: buffs.con.bulwark },
-    reserveLives: { pro: buffs.pro.life, con: buffs.con.life },
+    reserveLives,
   };
   pushMessage(
     room,
@@ -1228,12 +1241,20 @@ function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
   const loserSide: DecisionSide = pair.proId === loserId ? "pro" : "con";
   const winnerId = pair.proId === loserId ? pair.conId : pair.proId;
   const loserStack = parryLevel.get(`${room.id}:${pk}:${loserId}`) ?? 0;
+  const winnerStack = parryLevel.get(`${room.id}:${pk}:${winnerId}`) ?? 0;
   parryLevel.delete(`${room.id}:${pk}:${pair.proId}`);
   parryLevel.delete(`${room.id}:${pk}:${pair.conId}`);
 
-  // 목숨: a reserve life lets the fallen fighter survive and re-enter the pool.
-  if (du.reserveLives[loserSide] > 0) {
-    du.reserveLives[loserSide] -= 1;
+  // The winner keeps their built-up difficulty when the pair dissolves — it must
+  // never reset to 0 just because the matchup ended (carried via debt → next pair).
+  du.debt.set(winnerId, winnerStack);
+
+  // 목숨: a reserve life lets the fallen fighter survive and re-enter the pool —
+  // but only the exact fighter who equipped it (per-person, never a teammate or
+  // the opponent). The revived fighter resumes at the same difficulty, not 0.
+  if ((du.reserveLives.get(loserId) ?? 0) > 0) {
+    du.reserveLives.set(loserId, (du.reserveLives.get(loserId) ?? 0) - 1);
+    du.debt.set(loserId, loserStack);
     du.feed.push({ kind: "life", side: loserSide, name: memberInfo(room, loserId).name, amount: 0, ts: Date.now() });
     if (du.feed.length > 8) du.feed.shift();
     rematchDuel(io, room);
@@ -1304,8 +1325,18 @@ function resolveDecision(io: Server, room: Room, winner: DecisionSide) {
     );
   } else {
     room.decisionCooldown.set(d.itemId, Date.now() + DECISION_CON_COOLDOWN_MS);
-    d.result = { winner, outcome: "kept", toTier: null };
-    pushMessage(room, message("system", `🛡️ 결정전 방어 성공 — '${itemName}' 유지 (1분간 재신청 불가)`, "action"));
+    // 현황 유지 — pin the item in its current tier for 10 minutes.
+    const cur = tierOfItem(room.state, d.itemId);
+    let lockUntil: number | undefined;
+    if (cur) {
+      lockUntil = Date.now() + DECISION_KEEP_LOCK_MS;
+      room.tierLocks.set(d.itemId, { tierId: cur, until: lockUntil, dur: DECISION_KEEP_LOCK_MS, reason: "decision" });
+    }
+    d.result = { winner, outcome: "kept", toTier: null, lockUntil };
+    pushMessage(
+      room,
+      message("system", `🛡️ 결정전 방어 성공 — '${itemName}' 유지 (10분 고정, 1분간 재신청 불가)`, "action"),
+    );
   }
   d.phase = "resolved";
   if (room.decisionTimer) clearTimeout(room.decisionTimer);
@@ -1483,6 +1514,8 @@ function equipPerk(
   if (patch.combatBuff !== undefined) {
     const b = patch.combatBuff;
     if (b && !isCombatBuff(b)) return { ok: false, error: "사용할 수 없는 전투 버프예요." };
+    if (b && isAdminCombatBuff(b) && row.is_admin !== 1)
+      return { ok: false, error: "관리자 전용 스킬이에요." };
     fields.combat_buff = b;
   }
   updateUser(userId, fields);
@@ -1943,7 +1976,10 @@ io.on("connection", (socket: Socket) => {
       const d = room.decision;
       const du = d?.duel;
       const side = du ? duelSideOf(d!, aid) : null;
-      let delta = 1; // base +1 difficulty rise
+      // 관리자 공격 스킬 "강타 ×2": 내가(파리어가) 상대에게 더하는 난이도 상승을 2배로.
+      const myId = authedUser.id;
+      const parrier = [...room.members.values()].find((m) => m.userId === myId);
+      let delta = parrier?.combatBuff === "double" ? 2 : 1; // base rise (×2 admin skill)
       if (side && du) {
         const g = du.buffs[side].gamble;
         // 도박: each gambler flips ±1 on the rise (can shrink it or blow it up).
@@ -1964,6 +2000,8 @@ io.on("connection", (socket: Socket) => {
         }
         if (du.feed.length > 8) du.feed.shift();
       }
+      // 철벽 ½ 방어 스킬은 받는 사람 본인 클라이언트에서 난이도 상승률을 10%→5%로
+      // 낮춰 렌더링한다(AttackEffect의 perStack). 스택 수치(level) 자체는 그대로 둔다.
       nextLevel = Math.max(0, Math.min(MAX_PARRY_LEVEL, cur + delta));
     }
     parryLevel.set(qKey, nextLevel);

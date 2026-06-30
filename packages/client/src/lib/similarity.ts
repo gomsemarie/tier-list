@@ -49,3 +49,23 @@ export function findSimilarItems(
     .filter((x) => x.score >= threshold)
     .sort((a, b) => b.score - a.score);
 }
+
+// Duplicate-name policy when adding items:
+//   score ≥ BLOCK  → 추가 불가 (exact / 포함 / 거의 동일)
+//   WARN ≤ score   → 경고 후 확인 (비슷함)
+//   below          → 자유롭게 추가
+export const SIM_BLOCK = 0.9;
+export const SIM_WARN = 0.65;
+
+export type DupVerdict =
+  | { kind: "ok" }
+  | { kind: "warn"; match: Item; score: number }
+  | { kind: "block"; match: Item; score: number };
+
+/** Classify a candidate name against existing items (best match decides). */
+export function checkDuplicate(name: string, items: Item[]): DupVerdict {
+  const best = findSimilarItems(name, items, SIM_WARN)[0];
+  if (!best) return { kind: "ok" };
+  if (best.score >= SIM_BLOCK) return { kind: "block", match: best.item, score: best.score };
+  return { kind: "warn", match: best.item, score: best.score };
+}

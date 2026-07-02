@@ -1254,13 +1254,19 @@ export function TierListPage() {
           },
         })}
 
-      {/* 테트리스 대전 (multiplayer): both play at once; opponent shown at half size. */}
+      {/* 테트리스 대전 (multiplayer). 결정전 = free-for-all arena (all boards +
+          targeting + projectiles); 연습 대련 = 1:1 (opponent at half size). */}
       {room.tetris && !tetrisLost && (
         <TetrisGame
           key={room.tetris.at}
           by={room.authUser?.nickname ?? "나"}
           startSeconds={room.tetris.seconds}
-          getOpponent={tetrisGetOpp}
+          getOpponent={room.tetris.decision ? undefined : tetrisGetOpp}
+          arena={
+            room.tetris.decision && room.tetrisArena
+              ? { meId: room.tetrisArena.meId, fighters: room.tetrisArena.fighters, stateRef: room.tetrisArenaRef, onSetTarget: room.tetrisSetTarget }
+              : undefined
+          }
           deltaRef={room.tetrisDeltaRef}
           garbageRef={room.tetrisGarbageRef}
           startGarbage={room.tetris.startGarbage ?? 0}

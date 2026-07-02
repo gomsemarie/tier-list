@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { io, type Socket } from "socket.io-client";
 
 import { SEC_PER_ATTACK } from "./tetrisCore";
+import type { ArenaState } from "./TetrisGame";
+
+type ArenaFighter = { userId: string; name: string; side: "pro" | "con" };
 
 import type { TierListController } from "./controller";
 import type { Action } from "@tier-list/shared";
@@ -103,6 +106,12 @@ export type RoomConnection = {
   tetrisClear: (attack: number, garbage: number) => void;
   tetrisBoard: (grid: number[][], seconds: number) => void;
   tetrisDead: () => void;
+  /** 결정전 free-for-all arena: static roster + mount trigger (null = not in one). */
+  tetrisArena: { at: number; seconds: number; meId: string; fighters: ArenaFighter[] } | null;
+  /** Live arena state (boards/targets/dead/attacks) — polled by the Phaser scene. */
+  tetrisArenaRef: MutableRefObject<ArenaState>;
+  /** Pick which living enemy I attack (숫자키/클릭/Tab). */
+  tetrisSetTarget: (targetId: string) => void;
   /** The attacked user reflects the attack back to its sender. */
   parryAttack: (attackerId: string, escalate: boolean) => void;
   /** Report that this player got hit (parry missed) — finalizes the rally. */
@@ -204,6 +213,9 @@ export function useRoom(): RoomConnection {
   const tetrisOppRef = useRef<{ grid: number[][]; seconds: number } | null>(null);
   const tetrisDeltaRef = useRef(0);
   const tetrisGarbageRef = useRef(0);
+  const [tetrisArena, setTetrisArena] = useState<{ at: number; seconds: number; meId: string; fighters: ArenaFighter[] } | null>(null);
+  const tetrisArenaRef = useRef<ArenaState>({ boards: {}, targets: {}, dead: {}, attacks: [] });
+  const arenaSeqRef = useRef(0);
   const [moderation, setModeration] = useState<
     (ModerationEffect & { at: number }) | null
   >(null);
@@ -321,6 +333,7 @@ export function useRoom(): RoomConnection {
       tetrisDeltaRef.current = 0;
       tetrisGarbageRef.current = 0;
       setTetrisWin(null);
+      if (!p?.decision) setTetrisArena(null); // plain 1:1 → not an arena
       setTetris({
         by: String(p?.by || "상대"),
         seconds: Number(p?.seconds) || 60,
@@ -333,6 +346,28 @@ export function useRoom(): RoomConnection {
     // Decision-match pairing ended (won a round, or eliminated) → close the board.
     socket.on("tetris:done", () => {
       setTetris(null);
+      setTetrisArena(null);
+    });
+    // --- 결정전 free-for-all arena -------------------------------------------
+    socket.on("tetris:arena", (p: { meId?: string; seconds?: number; fighters?: ArenaFighter[]; targets?: Record<string, string> }) => {
+      arenaSeqRef.current = 0;
+      tetrisArenaRef.current = { boards: {}, targets: { ...(p?.targets ?? {}) }, dead: {}, attacks: [] };
+      setTetrisArena({ at: Date.now(), seconds: Number(p?.seconds) || 60, meId: String(p?.meId ?? ""), fighters: Array.isArray(p?.fighters) ? p.fighters : [] });
+    });
+    socket.on("tetris:arenaBoard", (p: { userId?: string; grid?: number[][]; seconds?: number }) => {
+      if (p?.userId && Array.isArray(p?.grid)) tetrisArenaRef.current.boards[p.userId] = { grid: p.grid, seconds: Number(p?.seconds) || 0 };
+    });
+    socket.on("tetris:arenaTarget", (p: { userId?: string; targetId?: string }) => {
+      if (p?.userId && p?.targetId) tetrisArenaRef.current.targets[p.userId] = p.targetId;
+    });
+    socket.on("tetris:arenaDead", (p: { userId?: string }) => {
+      if (p?.userId) tetrisArenaRef.current.dead[p.userId] = true;
+    });
+    socket.on("tetris:attack", (p: { from?: string; to?: string }) => {
+      if (!p?.from || !p?.to) return;
+      const a = tetrisArenaRef.current.attacks;
+      a.push({ from: p.from, to: p.to, seq: ++arenaSeqRef.current });
+      if (a.length > 40) a.splice(0, a.length - 40);
     });
     socket.on("tetris:oppClear", (p: { attack?: number; garbage?: number }) => {
       // Opponent attacked → drain SEC_PER_ATTACK × attack seconds from my clock
@@ -546,7 +581,13 @@ export function useRoom(): RoomConnection {
 
   const clearAttack = useCallback(() => setAttack(null), []);
   const clearDuelWin = useCallback(() => setDuelWin(null), []);
-  const clearTetris = useCallback(() => setTetris(null), []);
+  const clearTetris = useCallback(() => {
+    setTetris(null);
+    setTetrisArena(null);
+  }, []);
+  const tetrisSetTarget = useCallback((targetId: string) => {
+    socketRef.current?.emit("tetris:target", { targetId });
+  }, []);
   const clearTetrisWin = useCallback(() => setTetrisWin(null), []);
   const tetrisClear = useCallback((attack: number, garbage: number) => {
     socketRef.current?.emit("tetris:clear", { attack, garbage });
@@ -649,6 +690,9 @@ export function useRoom(): RoomConnection {
     tetrisClear,
     tetrisBoard,
     tetrisDead,
+    tetrisArena,
+    tetrisArenaRef,
+    tetrisSetTarget,
     parryAttack,
     rallyHit,
     moderation,

@@ -7,6 +7,21 @@ import { COLS, ROWS, CI, COLORS, SHAPES, KICK_JLSTZ, KICK_I, computeGarbage, isP
 
 export type TetrisOpponent = { grid: number[][]; seconds: number; name: string } | null;
 
+/** Live 결정전 arena state — mutated by useRoom's socket listeners, polled each
+ *  frame by the Phaser scene (kept in a ref so board updates don't re-render). */
+export type ArenaState = {
+  boards: Record<string, { grid: number[][]; seconds: number }>;
+  targets: Record<string, string>; // attacker → target
+  dead: Record<string, boolean>;
+  attacks: { from: string; to: string; seq: number }[]; // recent, for projectiles
+};
+export type ArenaProp = {
+  meId: string;
+  fighters: { userId: string; name: string; side: "pro" | "con" }[];
+  stateRef: MutableRefObject<ArenaState>;
+  onSetTarget: (targetId: string) => void;
+};
+
 type TetrisGameProps = {
   by: string;
   /** Seconds on the clock at the start. Time only ticks *down* (drain-only). */
@@ -31,6 +46,8 @@ type TetrisGameProps = {
   onGameOver: (lines: number) => void;
   /** 항복: concede this game (multiplayer → opponent wins; solo → just ends). */
   onSurrender?: () => void;
+  /** 결정전 free-for-all: renders every fighter's board + targeting + projectiles. */
+  arena?: ArenaProp;
   onClose: () => void;
 };
 
@@ -46,6 +63,7 @@ type SceneParams = {
   getOpp: () => TetrisOpponent;
   drainDelta: () => number;
   drainGarbage: () => number;
+  arena?: ArenaProp;
 };
 
 function tetrisScene(ss: number, p: SceneParams) {
@@ -65,6 +83,13 @@ function tetrisScene(ss: number, p: SceneParams) {
   const GX = BX + BW + u(6);
   const GW = u(12);
   const GH = ROWS * CELL;
+  // 결정전 arena: grid of every other fighter's small board (right of NEXT).
+  const AX = u(420);
+  const AY = u(86);
+  const ACELL = u(5); // small-board cell
+  const ACOLS = 4;
+  const ASLOTW = u(68);
+  const ASLOTH = u(132);
 
   return {
     key: "tetris",
@@ -287,6 +312,53 @@ function tetrisScene(ss: number, p: SceneParams) {
       kb.on("keydown-C", () => holdSwap());
       kb.on("keydown-SHIFT", () => holdSwap());
 
+      // 결정전 arena: slot geometry, targeting input, projectile state.
+      if (p.arena) {
+        const A = p.arena;
+        const mySide = A.fighters.find((f) => f.userId === A.meId)?.side;
+        const others = A.fighters.filter((f) => f.userId !== A.meId);
+        s.slots = others.map((f: ArenaProp["fighters"][number], i: number) => ({
+          f,
+          x: AX + (i % ACOLS) * ASLOTW,
+          y: AY + Math.floor(i / ACOLS) * ASLOTH,
+        }));
+        s.arenaCenter = (id: string) => {
+          if (id === A.meId) return { x: BX + BW / 2, y: BY + GH / 2 };
+          const sl = s.slots.find((x: any) => x.f.userId === id);
+          return sl ? { x: sl.x + 5 * ACELL, y: sl.y + u(15) + 10 * ACELL } : null;
+        };
+        s.projectiles = [];
+        s.seenSeq = 0;
+        const enemies = () => {
+          const st = A.stateRef.current;
+          return A.fighters.filter((f) => f.side !== mySide && !st.dead[f.userId]);
+        };
+        kb.addCapture(["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "TAB"]);
+        ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT"].forEach((k, i) =>
+          kb.on(`keydown-${k}`, () => {
+            const e = enemies()[i];
+            if (e) A.onSetTarget(e.userId);
+          }),
+        );
+        kb.on("keydown-TAB", () => {
+          const e = enemies();
+          if (!e.length) return;
+          const cur = A.stateRef.current.targets[A.meId];
+          const idx = e.findIndex((x) => x.userId === cur);
+          A.onSetTarget(e[(idx + 1) % e.length].userId);
+        });
+        s.input.on("pointerdown", (ptr: any) => {
+          for (const sl of s.slots) {
+            const bx = sl.x;
+            const by = sl.y + u(15);
+            if (ptr.x >= bx && ptr.x <= bx + 10 * ACELL && ptr.y >= by && ptr.y <= by + 20 * ACELL) {
+              if (sl.f.side !== mySide && !A.stateRef.current.dead[sl.f.userId]) A.onSetTarget(sl.f.userId);
+              return;
+            }
+          }
+        });
+      }
+
       s.g = s.add.graphics();
       // Score comparison header, centered directly above my board: my drained-
       // seconds on the left (cyan), opponent's on the right (red), with a
@@ -299,6 +371,13 @@ function tetrisScene(ss: number, p: SceneParams) {
       s.oppWait = s.add.text(OX + (COLS * OC) / 2, OY + (ROWS * OC) / 2, "", { fontFamily: PIXEL, fontSize: font(11), color: "#6A707E", align: "center" }).setOrigin(0.5).setVisible(false);
       s.statText = s.add.text(boardMidX, BY + ROWS * CELL + u(14), "", { fontFamily: PIXEL, fontSize: font(12), color: "#9AD8E8" }).setOrigin(0.5);
       s.reviveText = s.add.text(boardMidX, BY + (ROWS * CELL) / 2, "REVIVE", { fontFamily: ARCADE, fontSize: font(22), color: "#FF6B8A" }).setOrigin(0.5).setVisible(false);
+      if (p.arena) {
+        s.arenaTitle = s.add.text(AX, u(64), "숫자키/클릭=타깃 · Tab=순환", { fontFamily: PIXEL, fontSize: font(10), color: "#67E8F9" }).setOrigin(0, 0);
+        for (const sl of s.slots) {
+          sl.nameT = s.add.text(sl.x, sl.y, "", { fontFamily: PIXEL, fontSize: font(9), color: "#C4C8D2" }).setOrigin(0, 0);
+          sl.infoT = s.add.text(sl.x, sl.y + u(15) + 20 * ACELL + u(1), "", { fontFamily: PIXEL, fontSize: font(9), color: "#9AA0AD" }).setOrigin(0, 0);
+        }
+      }
 
       // --- drawing ---
       const box = (g: any, x: number, y: number, w: number, h: number) => {
@@ -348,11 +427,50 @@ function tetrisScene(ss: number, p: SceneParams) {
         g.lineStyle(u(2), 0x2a303c, 1);
         g.strokeRect(GX, BY, GW, GH);
       };
+      // 결정전 arena: every other fighter's small board + target highlight + the
+      // attack projectiles flying between boards.
+      const drawArena = (g: any) => {
+        const A = p.arena!;
+        const st = A.stateRef.current;
+        const mySide = A.fighters.find((f) => f.userId === A.meId)?.side;
+        const myTarget = st.targets[A.meId];
+        const enemyOrder = A.fighters.filter((f) => f.side !== mySide && !st.dead[f.userId]).map((f) => f.userId);
+        for (const sl of s.slots) {
+          const bx = sl.x;
+          const by = sl.y + u(15);
+          const bw = 10 * ACELL;
+          const bh = 20 * ACELL;
+          const dead = !!st.dead[sl.f.userId];
+          const isEnemy = sl.f.side !== mySide;
+          const isTarget = sl.f.userId === myTarget;
+          g.fillStyle(0x0b0e16, dead ? 0.5 : 0.92);
+          g.fillRect(bx, by, bw, bh);
+          const border = dead ? 0x3a3f4a : isTarget ? 0xfde047 : isEnemy ? 0xf87171 : 0x38bdf8;
+          g.lineStyle(isTarget ? u(3) : u(2), border, 1);
+          g.strokeRect(bx, by, bw, bh);
+          const bd = st.boards[sl.f.userId];
+          if (bd && !dead) for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (bd.grid[r]?.[c]) cell(g, bx + c * ACELL, by + r * ACELL, bd.grid[r][c], ACELL);
+          const num = isEnemy && !dead ? enemyOrder.indexOf(sl.f.userId) : -1;
+          sl.nameT.setText(`${num >= 0 ? `${num + 1}. ` : ""}${sl.f.name}`.slice(0, 12));
+          sl.nameT.setColor(isTarget ? "#FDE047" : isEnemy ? "#FCA5A5" : "#9AD8E8");
+          sl.infoT.setText(dead ? "OUT" : `${bd ? Math.ceil(Math.max(0, bd.seconds)) : "?"}s`);
+        }
+        for (const pr of s.projectiles) {
+          const t = Math.min(1, pr.t / pr.dur);
+          const x = pr.fx + (pr.tx - pr.fx) * t;
+          const y = pr.fy + (pr.ty - pr.fy) * t;
+          g.fillStyle(pr.color, 0.9);
+          g.fillCircle(x, y, u(5));
+          g.fillStyle(0xffffff, 0.7);
+          g.fillCircle(x, y, u(2));
+        }
+      };
       s.draw = () => {
         const g = s.g;
         g.clear();
         if (p.showOpp) scoreBar(g); // score compare only matters vs an opponent
         timeGauge(g);
+        if (p.arena) drawArena(g);
         box(g, BX - u(3), BY - u(3), COLS * CELL + u(6), ROWS * CELL + u(6));
         for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) cell(g, BX + c * CELL, BY + r * CELL, s.grid[r][c], CELL);
         if (s.cur && !s.over) {
@@ -412,6 +530,19 @@ function tetrisScene(ss: number, p: SceneParams) {
     update: function (this: any, _t: number, dt: number) {
       const s = this;
       if (s.reviveFlash > 0) s.reviveFlash -= dt;
+      if (p.arena) {
+        // Spawn a projectile for each new attack event, then advance/expire them.
+        const st = p.arena.stateRef.current;
+        for (const a of st.attacks) {
+          if (a.seq > s.seenSeq) {
+            const from = s.arenaCenter(a.from);
+            const to = s.arenaCenter(a.to);
+            if (from && to) s.projectiles.push({ fx: from.x, fy: from.y, tx: to.x, ty: to.y, t: 0, dur: 420, color: a.from === p.arena.meId ? 0x22d3ee : 0xf87171 });
+          }
+        }
+        if (st.attacks.length) s.seenSeq = Math.max(s.seenSeq, st.attacks[st.attacks.length - 1].seq);
+        s.projectiles = s.projectiles.filter((pr: any) => (pr.t += dt) < pr.dur);
+      }
       if (!s.over) {
         s.time -= dt;
         const dd = p.drainDelta(); // opponent's clears drain my clock (negative)
@@ -450,7 +581,7 @@ function tetrisScene(ss: number, p: SceneParams) {
 
 /** Full-screen Tetris time-attack. Solo = pure practice; multiplayer feeds an
  *  opponent board + drain/garbage via refs. */
-export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garbageRef, startGarbage = 0, lives = 0, onClear, onBoard, onGameOver, onSurrender, onClose }: TetrisGameProps) {
+export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garbageRef, startGarbage = 0, lives = 0, onClear, onBoard, onGameOver, onSurrender, arena, onClose }: TetrisGameProps) {
   const ref = useRef<HTMLDivElement>(null);
   const doneRef = useRef(false);
   const [over, setOver] = useState<{ lines: number } | null>(null);
@@ -468,6 +599,7 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
         startGarbage,
         lives,
         showOpp: !!getOpponent,
+        arena,
         onClear,
         onBoard,
         getOpp: () => getOpponent?.() ?? null,
@@ -490,7 +622,7 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
       });
       game = new Phaser.Game({
         type: Phaser.CANVAS,
-        width: 560 * ss,
+        width: (arena ? 720 : 560) * ss, // arena needs room for the fighter grid
         height: 470 * ss,
         parent: ref.current,
         transparent: true,
@@ -503,7 +635,7 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
       cancelled = true;
       if (game) game.destroy(true);
     };
-  }, [startSeconds, startGarbage, lives, getOpponent, deltaRef, garbageRef, onClear, onBoard, onGameOver]);
+  }, [startSeconds, startGarbage, lives, getOpponent, deltaRef, garbageRef, arena, onClear, onBoard, onGameOver]);
 
   const giveUp = () => {
     setConfirmGiveUp(false);
@@ -572,7 +704,7 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
                 </div>
               ))}
             </div>
-            <div ref={ref} className="h-[705px] w-[840px] max-w-[80vw]" style={{ pointerEvents: "auto", background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)" }} />
+            <div ref={ref} className={arena ? "h-[640px] w-[980px] max-w-[94vw]" : "h-[705px] w-[840px] max-w-[80vw]"} style={{ pointerEvents: "auto", background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)" }} />
           </div>
         </div>
         {confirmGiveUp && !over && (

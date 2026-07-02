@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { io, type Socket } from "socket.io-client";
 
+import { SEC_PER_ATTACK } from "./tetrisCore";
+
 import type { TierListController } from "./controller";
 import type { Action } from "@tier-list/shared";
 import type {
@@ -98,7 +100,7 @@ export type RoomConnection = {
   tetrisWin: { by: string; at: number } | null;
   clearTetris: () => void;
   clearTetrisWin: () => void;
-  tetrisClear: (lines: number, garbage: number) => void;
+  tetrisClear: (attack: number, garbage: number) => void;
   tetrisBoard: (grid: number[][], seconds: number) => void;
   tetrisDead: () => void;
   /** The attacked user reflects the attack back to its sender. */
@@ -332,10 +334,10 @@ export function useRoom(): RoomConnection {
     socket.on("tetris:done", () => {
       setTetris(null);
     });
-    socket.on("tetris:oppClear", (p: { lines?: number; garbage?: number }) => {
-      // Opponent cleared N lines → drain 2×N seconds from my clock and stack their
-      // net garbage on my board.
-      tetrisDeltaRef.current -= 2 * (Number(p?.lines) || 0);
+    socket.on("tetris:oppClear", (p: { attack?: number; garbage?: number }) => {
+      // Opponent attacked → drain SEC_PER_ATTACK × attack seconds from my clock
+      // (Tetrio-weighted) and stack their net garbage on my board.
+      tetrisDeltaRef.current -= SEC_PER_ATTACK * Math.max(0, Number(p?.attack) || 0);
       tetrisGarbageRef.current += Math.max(0, Number(p?.garbage) || 0);
     });
     socket.on("tetris:oppBoard", (p: { grid?: number[][]; seconds?: number }) => {
@@ -546,8 +548,8 @@ export function useRoom(): RoomConnection {
   const clearDuelWin = useCallback(() => setDuelWin(null), []);
   const clearTetris = useCallback(() => setTetris(null), []);
   const clearTetrisWin = useCallback(() => setTetrisWin(null), []);
-  const tetrisClear = useCallback((lines: number, garbage: number) => {
-    socketRef.current?.emit("tetris:clear", { lines, garbage });
+  const tetrisClear = useCallback((attack: number, garbage: number) => {
+    socketRef.current?.emit("tetris:clear", { attack, garbage });
   }, []);
   const tetrisBoard = useCallback((grid: number[][], seconds: number) => {
     socketRef.current?.emit("tetris:board", { grid, seconds });

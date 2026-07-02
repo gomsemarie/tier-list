@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 
 import { ARCADE, PIXEL, DuelTitle, RetroBackdrop } from "./duelChrome";
-import { COLS, ROWS, CI, COLORS, SHAPES, KICK_JLSTZ, KICK_I, computeGarbage, isPerfectClear, type Piece } from "./tetrisCore";
+import { COLS, ROWS, CI, COLORS, SHAPES, KICK_JLSTZ, KICK_I, computeGarbage, isPerfectClear, SEC_PER_ATTACK, type Piece } from "./tetrisCore";
 
 export type TetrisOpponent = { grid: number[][]; seconds: number; name: string } | null;
 
@@ -21,8 +21,10 @@ type TetrisGameProps = {
   startGarbage?: number;
   /** 목숨 skill: extra revives — a top-out clears the board and continues. */
   lives?: number;
-  /** Each line-clear lock → (lines, garbage) I send to the opponent. */
-  onClear?: (lines: number, garbage: number) => void;
+  /** Each line-clear lock → (attack, garbage) I send: `attack` = the Tetrio
+   *  attack value (drives the opponent's time drain, SEC_PER_ATTACK×), `garbage`
+   *  = the net lines to stack after 1:1 cancellation. */
+  onClear?: (attack: number, garbage: number) => void;
   /** Snapshot of my board each lock (for the opponent's live view). */
   onBoard?: (grid: number[][], seconds: number) => void;
   /** Top-out or clock ran out → final line count. */
@@ -38,7 +40,7 @@ type SceneParams = {
   lives?: number;
   /** Multiplayer: always reserve/draw the opponent panel (even before data). */
   showOpp?: boolean;
-  onClear?: (lines: number, garbage: number) => void;
+  onClear?: (attack: number, garbage: number) => void;
   onBoard?: (g: number[][], s: number) => void;
   onGameOver: (l: number) => void;
   getOpp: () => TetrisOpponent;
@@ -51,17 +53,18 @@ function tetrisScene(ss: number, p: SceneParams) {
   const font = (n: number) => `${n * ss}px`;
   const CELL = u(15);
   const BX = u(150);
-  const BY = u(104);
+  const BY = u(92); // leaves room above the board for the score header
   const OC = u(8); // opponent cell
   const OX = u(432);
   // Bottom-align the opponent board with mine (both bottom edges at the same y).
   const OY = BY + ROWS * CELL - ROWS * OC;
   const startMs = p.startSeconds * 1000;
-  // Circular timer sits centered *above* the board, clear of the playfield.
   const boardMidX = BX + (COLS * CELL) / 2;
-  const timerCx = boardMidX;
-  const timerCy = u(46);
-  const timerR = u(30);
+  const BW = COLS * CELL; // board width
+  // Vertical time gauge, full board height, hugging the board's right edge.
+  const GX = BX + BW + u(6);
+  const GW = u(12);
+  const GH = ROWS * CELL;
 
   return {
     key: "tetris",
@@ -161,6 +164,9 @@ function tetrisScene(ss: number, p: SceneParams) {
           if (r < 0) { end(); return; }
           s.grid[r][c] = CI[s.cur.type as Piece];
         }
+        // Detect the T-spin on the INTACT board (piece placed, lines not yet
+        // cleared) — the corner check must read pre-clear cell positions.
+        const tspin = isTSpin();
         let cleared = 0;
         for (let r = ROWS - 1; r >= 0; r--) {
           if (s.grid[r].every((v: number) => v !== 0)) {
@@ -172,20 +178,22 @@ function tetrisScene(ss: number, p: SceneParams) {
         }
         if (cleared > 0) {
           s.lines += cleared;
-          const tspin = isTSpin();
           const difficult = cleared === 4 || tspin;
           s.combo++;
           const perfect = isPerfectClear(s.grid);
-          const g = computeGarbage(cleared, tspin, s.b2b, s.combo, perfect);
+          const g = computeGarbage(cleared, tspin, s.b2b, s.combo, perfect); // Tetrio attack
           s.b2b = difficult;
-          // Cancel incoming garbage 1:1 before sending the remainder.
+          // Cancel incoming garbage 1:1 before stacking the remainder on them.
           const cancel = Math.min(g, s.incoming);
           s.incoming -= cancel;
           const net = g - cancel;
           // My clears only drain the opponent's clock (never grow mine), so the
-          // match always converges. `net` is the garbage to stack on them.
-          s.dealt += 2 * cleared; // score = seconds drained from the opponent
-          p.onClear?.(cleared, net);
+          // match always converges. Time drain scales with the *attack* value
+          // (Tetrio-weighted), separate from the net garbage that stacks.
+          if (g > 0) {
+            s.dealt += SEC_PER_ATTACK * g; // score = seconds drained from the opponent
+            p.onClear?.(g, net);
+          }
         } else {
           s.combo = -1;
           if (s.incoming > 0) { addGarbage(s.incoming); s.incoming = 0; }
@@ -280,11 +288,13 @@ function tetrisScene(ss: number, p: SceneParams) {
       kb.on("keydown-SHIFT", () => holdSwap());
 
       s.g = s.add.graphics();
-      // Big number inside the ring = remaining seconds. Scores are the
-      // drained-seconds sums (Korean labels → PIXEL font renders Hangul).
-      s.timerText = s.add.text(timerCx, timerCy, "", { fontFamily: ARCADE, fontSize: font(16), color: "#FDE047" }).setOrigin(0.5);
-      s.myScore = s.add.text(u(20), u(28), "", { fontFamily: PIXEL, fontSize: font(13), color: "#67E8F9" }).setOrigin(0, 0.5);
-      s.oppScore = s.add.text(u(540), u(28), "", { fontFamily: PIXEL, fontSize: font(12), color: "#FCA5A5" }).setOrigin(1, 0.5);
+      // Score comparison header, centered directly above my board: my drained-
+      // seconds on the left (cyan), opponent's on the right (red), with a
+      // tug-of-war bar between them (drawn in scoreBar) for at-a-glance compare.
+      s.meScore = s.add.text(BX, u(44), "", { fontFamily: PIXEL, fontSize: font(15), fontStyle: "bold", color: "#67E8F9" }).setOrigin(0, 0.5);
+      s.opScore = s.add.text(BX + BW, u(44), "", { fontFamily: PIXEL, fontSize: font(15), fontStyle: "bold", color: "#FCA5A5" }).setOrigin(1, 0.5);
+      // Remaining seconds, sitting on top of the vertical time gauge.
+      s.gaugeSec = s.add.text(GX + GW / 2, BY - u(6), "", { fontFamily: ARCADE, fontSize: font(11), color: "#FDE047" }).setOrigin(0.5, 1);
       s.oppInfo = s.add.text(OX, OY - u(6), "", { fontFamily: PIXEL, fontSize: font(11), color: "#9AA0AD" }).setOrigin(0, 1);
       s.oppWait = s.add.text(OX + (COLS * OC) / 2, OY + (ROWS * OC) / 2, "", { fontFamily: PIXEL, fontSize: font(11), color: "#6A707E", align: "center" }).setOrigin(0.5).setVisible(false);
       s.statText = s.add.text(boardMidX, BY + ROWS * CELL + u(14), "", { fontFamily: PIXEL, fontSize: font(12), color: "#9AD8E8" }).setOrigin(0.5);
@@ -304,25 +314,27 @@ function tetrisScene(ss: number, p: SceneParams) {
         g.fillStyle(0xffffff, 0.14);
         g.fillRect(x + 1, y + 1, size - 2, u(2));
       };
-      const timer = (g: any) => {
-        const frac = Math.max(0, Math.min(1, s.time / startMs));
-        const col = frac < 0.15 ? 0xef4444 : frac < 0.33 ? 0xf59e0b : 0x22d3ee;
-        g.lineStyle(u(6), 0x1b2130, 1);
-        g.beginPath();
-        g.arc(timerCx, timerCy, timerR, 0, Math.PI * 2);
-        g.strokePath();
-        if (frac > 0) {
-          g.lineStyle(u(6), col, 1);
-          g.beginPath();
-          g.arc(timerCx, timerCy, timerR, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
-          g.strokePath();
-        }
+      // Tug-of-war score bar above the board: cyan (me) vs red (opponent),
+      // split by each side's share of the total drained-seconds.
+      const scoreBar = (g: any) => {
+        const by = u(56);
+        const bh = u(13);
+        const total = s.dealt + s.oppDealt;
+        const frac = total > 0 ? s.dealt / total : 0.5;
+        g.fillStyle(0x0b0e16, 0.92);
+        g.fillRect(BX, by, BW, bh);
+        g.fillStyle(0x22d3ee, 1);
+        g.fillRect(BX + u(1), by + u(1), (BW - u(2)) * frac, bh - u(2));
+        g.fillStyle(0xf87171, 1);
+        g.fillRect(BX + u(1) + (BW - u(2)) * frac, by + u(1), (BW - u(2)) * (1 - frac), bh - u(2));
+        g.lineStyle(u(2), 0x2a303c, 1);
+        g.strokeRect(BX, by, BW, bh);
+        // center tick
+        g.lineStyle(u(1), 0xffffff, 0.5);
+        g.lineBetween(boardMidX, by, boardMidX, by + bh);
       };
-      // Vertical time gauge hugging the right edge of my board — drains from the
-      // top, green → yellow → red as it empties, so time is visible at eye level.
-      const GX = BX + COLS * CELL + u(6);
-      const GW = u(12);
-      const GH = ROWS * CELL;
+      // Vertical time gauge, full board height, hugging the board's right edge —
+      // drains from the top, green → yellow → red as it empties.
       const timeGauge = (g: any) => {
         const frac = Math.max(0, Math.min(1, s.time / startMs));
         const col = frac > 0.5 ? 0x22c55e : frac > 0.2 ? 0xfacc15 : 0xef4444;
@@ -339,7 +351,7 @@ function tetrisScene(ss: number, p: SceneParams) {
       s.draw = () => {
         const g = s.g;
         g.clear();
-        timer(g);
+        if (p.showOpp) scoreBar(g); // score compare only matters vs an opponent
         timeGauge(g);
         box(g, BX - u(3), BY - u(3), COLS * CELL + u(6), ROWS * CELL + u(6));
         for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) cell(g, BX + c * CELL, BY + r * CELL, s.grid[r][c], CELL);
@@ -368,28 +380,30 @@ function tetrisScene(ss: number, p: SceneParams) {
         };
         mini(s.hold, u(24), BY);
         s.next.slice(0, 3).forEach((t: Piece, i: number) => mini(t, BX + COLS * CELL + u(24), BY + i * u(50)));
-        s.timerText.setText(`${Math.ceil(Math.max(0, s.time) / 1000)}`);
-        s.myScore.setText(`내 점수 ${s.dealt}`);
+        const secLeft = Math.ceil(Math.max(0, s.time) / 1000);
+        const gfrac = Math.max(0, Math.min(1, s.time / startMs));
+        s.gaugeSec.setColor(gfrac > 0.5 ? "#22c55e" : gfrac > 0.2 ? "#facc15" : "#ef4444");
+        s.gaugeSec.setText(`${secLeft}s`);
         s.statText.setText(`${s.lines}L${s.combo > 0 ? ` · ${s.combo} COMBO` : ""}${s.lives > 0 ? ` · 목숨 ${s.lives}` : ""}`);
         s.reviveText.setVisible(s.reviveFlash > 0);
         const opp = p.getOpp();
         if (p.showOpp) {
-          // Always reserve the opponent panel on the right (multiplayer), even
-          // before their first board arrives, so it's clearly present.
+          // Score header (both sides) + always-present opponent panel.
+          s.meScore.setText(`나 ${s.dealt}`);
+          s.opScore.setText(`${s.oppDealt} 상대`);
           box(g, OX, OY, COLS * OC, ROWS * OC);
           if (opp) {
             for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (opp.grid[r]?.[c]) cell(g, OX + c * OC, OY + r * OC, opp.grid[r][c], OC);
-            s.oppInfo.setText(`상대 · ${opp.name}`);
-            s.oppScore.setText(`상대 점수 ${s.oppDealt}`);
+            s.oppInfo.setText(`상대 · ${opp.name} · ${Math.ceil(Math.max(0, opp.seconds))}s`);
           } else {
             s.oppWait.setText("상대\n대기중…");
             s.oppInfo.setText("상대");
-            s.oppScore.setText(`상대 점수 ${s.oppDealt}`);
           }
           s.oppWait.setVisible(!opp);
         } else {
+          s.meScore.setText("");
+          s.opScore.setText("");
           s.oppInfo.setText("");
-          s.oppScore.setText("");
           s.oppWait.setVisible(false);
         }
       };

@@ -36,6 +36,11 @@ export const KICK_I: Record<string, number[][]> = {
   "30": [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]], "03": [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
 };
 
+// Seconds drained from the opponent's clock per point of Tetrio "attack" (the
+// computeGarbage value) — so a Tetris (attack 4) drains 8s, a T-spin double
+// (attack 4) drains 8s, a single (attack 0) drains none, etc.
+export const SEC_PER_ATTACK = 2;
+
 // Tetrio-style garbage tables (modern guideline).
 export const GARB = [0, 0, 1, 2, 4]; // by lines cleared (0..4)
 export const TSPIN_GARB = [0, 2, 4, 6]; // t-spin by lines cleared (0..3)

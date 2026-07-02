@@ -2239,13 +2239,13 @@ io.on("connection", (socket: Socket) => {
   });
 
   // --- 테트리스 대전 relay: forward my events to my opponent's screen -----------
-  socket.on("tetris:clear", ({ lines, garbage }: { lines?: number; garbage?: number }) => {
+  socket.on("tetris:clear", ({ attack, garbage }: { attack?: number; garbage?: number }) => {
     if (!currentRoom || !authedUser) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
     const opp = tetrisOpp.get(tkey(room.id, authedUser.id));
     if (!opp) return;
-    const ln = Math.max(0, Number(lines) || 0);
+    const at = Math.max(0, Number(attack) || 0); // Tetrio attack → opponent time drain
     let g = Math.max(0, Number(garbage) || 0);
     // Decision-match Tetris: 도박 gambles the outgoing garbage, 방어 lets the
     // opponent's side absorb a batch. (목숨 revive + 공격 start-garbage are handled
@@ -2283,7 +2283,7 @@ io.on("connection", (socket: Socket) => {
         g = 0; // garbage absorbed (time drain still lands)
       }
     }
-    emitToUser(io, room, opp, "tetris:oppClear", { lines: ln, garbage: g });
+    emitToUser(io, room, opp, "tetris:oppClear", { attack: at, garbage: g });
   });
 
   socket.on("tetris:board", ({ grid, seconds }: { grid?: number[][]; seconds?: number }) => {

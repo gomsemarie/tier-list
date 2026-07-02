@@ -13,6 +13,7 @@ import {
   computeGarbage,
   isPerfectClear,
   shuffledBag,
+  SEC_PER_ATTACK,
   type Piece,
 } from "./tetrisCore";
 
@@ -34,8 +35,9 @@ const TICK = 50;
 type BotOpts = {
   seconds: number;
   difficulty: BotDifficulty;
-  /** The bot cleared lines → attack the player (drain clock 2×lines + garbage). */
-  onClear: (lines: number, garbage: number) => void;
+  /** The bot cleared → attack the player: `attack` = Tetrio attack value (drives
+   *  the player's time drain), `garbage` = net lines to stack after cancellation. */
+  onClear: (attack: number, garbage: number) => void;
   /** The bot topped out or ran out of time → the player wins. */
   onDead: () => void;
 };
@@ -161,7 +163,7 @@ export function createTetrisBot(opts: BotOpts): TetrisBot {
       const cancel = Math.min(g, incoming);
       incoming -= cancel;
       const net = g - cancel;
-      opts.onClear(pick.cleared, net);
+      if (g > 0) opts.onClear(g, net); // attack value drives the drain
     } else {
       combo = -1;
       if (incoming > 0) {
@@ -189,8 +191,8 @@ export function createTetrisBot(opts: BotOpts): TetrisBot {
 
   return {
     getBoard: () => ({ grid: clone(grid), seconds: Math.max(0, time / 1000) }),
-    receive: (lines: number, garbage: number) => {
-      time -= 2000 * Math.max(0, lines); // player's clears drain the bot's clock
+    receive: (attack: number, garbage: number) => {
+      time -= SEC_PER_ATTACK * 1000 * Math.max(0, attack); // player's attack drains the bot's clock
       incoming += Math.max(0, garbage);
     },
     start,

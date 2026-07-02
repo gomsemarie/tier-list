@@ -33,6 +33,7 @@ import { AttackEffect, type AttackItem } from "./AttackEffect";
 import { ComboRushEffect } from "./ComboRushEffect";
 import { TetrisGame } from "./TetrisGame";
 import { createTetrisBot, BOT_LABEL, type BotDifficulty, type TetrisBot } from "./tetrisBot";
+import { SEC_PER_ATTACK } from "./tetrisCore";
 import { AuthDialog } from "./AuthDialog";
 import { Avatar } from "./Avatar";
 import { BanWarningFrame } from "./BanWarningFrame";
@@ -220,7 +221,7 @@ export function TierListPage() {
     const o = tetrisOppRef.current;
     return o ? { grid: o.grid, seconds: o.seconds, name: tetrisBy ?? "상대" } : null;
   }, [tetrisOppRef, tetrisBy]);
-  const tetrisOnClear = useCallback((lines: number, garbage: number) => tetrisClear(lines, garbage), [tetrisClear]);
+  const tetrisOnClear = useCallback((attack: number, garbage: number) => tetrisClear(attack, garbage), [tetrisClear]);
   const tetrisOnBoard = useCallback((grid: number[][], seconds: number) => tetrisBoard(grid, seconds), [tetrisBoard]);
   const tetrisOnGameOver = useCallback(() => {
     tetrisDead();
@@ -235,8 +236,8 @@ export function TierListPage() {
     const b = createTetrisBot({
       seconds: bot.seconds,
       difficulty: bot.difficulty,
-      onClear: (lines, garbage) => {
-        botDeltaRef.current -= 2 * lines; // bot's clears drain my clock
+      onClear: (attack, garbage) => {
+        botDeltaRef.current -= SEC_PER_ATTACK * attack; // bot's attack drains my clock
         botGarbageRef.current += garbage; // + stack garbage on me
       },
       onDead: () => setBotResult("win"), // bot topped out / ran out → I win
@@ -254,7 +255,7 @@ export function TierListPage() {
     const bd = b.getBoard();
     return { grid: bd.grid, seconds: bd.seconds, name: BOT_LABEL[bot.difficulty] };
   }, [bot]);
-  const botOnClear = useCallback((lines: number, garbage: number) => botRef.current?.receive(lines, garbage), []);
+  const botOnClear = useCallback((attack: number, garbage: number) => botRef.current?.receive(attack, garbage), []);
   const botOnGameOver = useCallback(() => {
     botRef.current?.stop();
     setBotResult("lose");

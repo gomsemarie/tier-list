@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMatch, useNavigate, useParams } from "react-router-dom";
 import { monitorForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { extractClosestEdge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import {
   ArrowDownAZ,
+  Blocks,
+  Bot,
   ChevronDown,
   ChevronUp,
   Gamepad2,
@@ -23,12 +25,14 @@ import {
 
 import { POOL_ID, TIER_COLORS } from "@tier-list/shared";
 import type { DuelGameMode, Item, Member } from "@tier-list/shared";
-import { checkDuplicate } from "@/lib/similarity";
+import { checkDuplicate, findSimilarItems, SIM_WARN, type SimilarItem } from "@/lib/similarity";
 import { ARCADE, PIXEL } from "./duelChrome";
 import { isCardData, isListData } from "./dnd";
 import { AccountDialog } from "./AccountDialog";
 import { AttackEffect, type AttackItem } from "./AttackEffect";
 import { ComboRushEffect } from "./ComboRushEffect";
+import { TetrisGame } from "./TetrisGame";
+import { createTetrisBot, BOT_LABEL, type BotDifficulty, type TetrisBot } from "./tetrisBot";
 import { AuthDialog } from "./AuthDialog";
 import { Avatar } from "./Avatar";
 import { BanWarningFrame } from "./BanWarningFrame";
@@ -49,6 +53,13 @@ import { TierPopover } from "./TierPopover";
 import { TierRow } from "./TierRow";
 import { useRoom } from "./useRoom";
 import { useLocalTierList } from "./useTierList";
+
+/** Hue-initials fallback color for an item with no image. */
+function swatch(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return `hsl(${((h % 360) + 360) % 360},40%,46%)`;
+}
 
 const STATUS_META = {
   online: { color: "#5BD3A0", label: "온라인" },
@@ -81,8 +92,15 @@ export function TierListPage() {
   const [account, setAccount] = useState(false);
   // Admin solo practice: an imaginary opponent that always escalates, so the
   // difficulty climbs by 1 every successful parry until you miss.
-  const [solo, setSolo] = useState<{ mode: DuelGameMode; level: number; key: number } | null>(null);
+  const [solo, setSolo] = useState<{ mode: DuelGameMode; level: number; key: number; seconds?: number } | null>(null);
   const [soloEnd, setSoloEnd] = useState<{ mode: DuelGameMode; level: number } | null>(null);
+  // 봇 대전 (client-side Tetris AI opponent).
+  const [bot, setBot] = useState<{ difficulty: BotDifficulty; seconds: number; key: number } | null>(null);
+  const [botSeconds, setBotSeconds] = useState(180);
+  const [botResult, setBotResult] = useState<"win" | "lose" | null>(null);
+  const botRef = useRef<TetrisBot | null>(null);
+  const botDeltaRef = useRef(0);
+  const botGarbageRef = useRef(0);
   const [soloNote, setSoloNote] = useState<{ Icon: LucideIcon; title: string; sub: string; color: string } | null>(null);
   const soloParried = useRef(false);
   const soloLives = useRef(0); // 목숨(life): 미스를 버틸 수 있는 횟수
@@ -99,7 +117,7 @@ export function TierListPage() {
       setSolo({ mode, level, key: Date.now() });
     }, 1050);
   };
-  const startSolo = (mode: DuelGameMode) => {
+  const startSolo = (mode: DuelGameMode, seconds = 60) => {
     // 내 장착 전투 스킬을 솔로 연습에도 반영(half는 renderDuel의 perStack로 적용됨).
     const buff = room.authUser?.combatBuff;
     soloParried.current = false;
@@ -107,7 +125,7 @@ export function TierListPage() {
     soloAbsorb.current = buff === "bulwark" ? 1 : 0;
     setSoloNote(null);
     setSoloEnd(null);
-    setSolo({ mode, level: 0, key: Date.now() });
+    setSolo({ mode, level: 0, key: Date.now(), seconds });
   };
   const [memberView, setMemberView] = useState<Member | null>(null);
   const [attackCd, setAttackCd] = useState<Record<string, number>>({});
@@ -175,6 +193,77 @@ export function TierListPage() {
       ? `${room.room.title} · 티어리스트`
       : "티어리스트 — 실시간 티어 정하기";
   }, [room.room?.title]);
+
+  // Won a duel (opponent missed): drop the waiting screen, show YOU WIN briefly.
+  const { duelWin, clearAttack, clearDuelWin } = room;
+  useEffect(() => {
+    if (!duelWin) return;
+    clearAttack();
+    const t = setTimeout(clearDuelWin, 2800);
+    return () => clearTimeout(t);
+  }, [duelWin, clearAttack, clearDuelWin]);
+
+  // --- 테트리스 대전 (multiplayer): stable callbacks so the Phaser game is not
+  // torn down on unrelated re-renders. The opponent board + clock come from refs
+  // the useRoom socket listeners keep fresh; onGameOver reports my loss.
+  const [tetrisLost, setTetrisLost] = useState(false);
+  const tetrisAt = room.tetris?.at;
+  const tetrisBy = room.tetris?.by;
+  // 결정전 Tetris: no local DEFEAT overlay — the DecisionCard + server tetris:done
+  // drive elimination/revive/rematch, so we just report the loss and wait.
+  const tetrisDecision = !!room.tetris?.decision;
+  useEffect(() => {
+    if (tetrisAt) setTetrisLost(false);
+  }, [tetrisAt]);
+  const { tetrisOppRef, tetrisClear, tetrisBoard, tetrisDead } = room;
+  const tetrisGetOpp = useCallback(() => {
+    const o = tetrisOppRef.current;
+    return o ? { grid: o.grid, seconds: o.seconds, name: tetrisBy ?? "상대" } : null;
+  }, [tetrisOppRef, tetrisBy]);
+  const tetrisOnClear = useCallback((lines: number, garbage: number) => tetrisClear(lines, garbage), [tetrisClear]);
+  const tetrisOnBoard = useCallback((grid: number[][], seconds: number) => tetrisBoard(grid, seconds), [tetrisBoard]);
+  const tetrisOnGameOver = useCallback(() => {
+    tetrisDead();
+    if (!tetrisDecision) setTetrisLost(true);
+  }, [tetrisDead, tetrisDecision]);
+
+  // 봇 대전 lifecycle: spin up the AI opponent for a battle, tear it down after.
+  useEffect(() => {
+    if (!bot) return;
+    botDeltaRef.current = 0;
+    botGarbageRef.current = 0;
+    const b = createTetrisBot({
+      seconds: bot.seconds,
+      difficulty: bot.difficulty,
+      onClear: (lines, garbage) => {
+        botDeltaRef.current -= 2 * lines; // bot's clears drain my clock
+        botGarbageRef.current += garbage; // + stack garbage on me
+      },
+      onDead: () => setBotResult("win"), // bot topped out / ran out → I win
+    });
+    botRef.current = b;
+    b.start();
+    return () => {
+      b.stop();
+      botRef.current = null;
+    };
+  }, [bot]);
+  const botGetOpp = useCallback(() => {
+    const b = botRef.current;
+    if (!b || !bot) return null;
+    const bd = b.getBoard();
+    return { grid: bd.grid, seconds: bd.seconds, name: BOT_LABEL[bot.difficulty] };
+  }, [bot]);
+  const botOnClear = useCallback((lines: number, garbage: number) => botRef.current?.receive(lines, garbage), []);
+  const botOnGameOver = useCallback(() => {
+    botRef.current?.stop();
+    setBotResult("lose");
+  }, []);
+  const closeBot = () => {
+    botRef.current?.stop();
+    setBot(null);
+    setBotResult(null);
+  };
 
   const myMember = room.room?.members.find((m) => m.userId === room.authUser?.id);
   const canModerate =
@@ -259,28 +348,26 @@ export function TierListPage() {
     state.tiers.forEach((t, i) => controller.updateTier(t.id, { color: TIER_COLORS[i % TIER_COLORS.length] }));
   }
 
-  /** Duplicate-name gate: block near-identical names, warn on similar ones.
-   *  Returns true when it's OK to add `name`. */
-  function guardAdd(name: string): boolean {
-    const v = checkDuplicate(name, Object.values(state.items));
-    if (v.kind === "block") {
-      window.alert(`'${v.match.name}'와(과) 같거나 매우 비슷해서 추가할 수 없어요.`);
-      return false;
+  // Duplicate-name gate with a real UI: exact/near-dup → block (shows what it
+  // matches); similar → ask, showing the similar items, before proceeding.
+  const [dup, setDup] = useState<{ name: string; verdict: "warn" | "block"; matches: SimilarItem[]; onAdd: () => void } | null>(null);
+  function withDupCheck(name: string, proceed: () => void) {
+    const items = Object.values(state.items);
+    const v = checkDuplicate(name, items);
+    if (v.kind === "ok") {
+      proceed();
+      return;
     }
-    if (v.kind === "warn") {
-      return window.confirm(
-        `'${v.match.name}'와(과) 비슷해요 (유사도 ${Math.round(v.score * 100)}%). 그래도 추가할까요?`,
-      );
-    }
-    return true;
+    setDup({ name, verdict: v.kind, matches: findSimilarItems(name, items, SIM_WARN).slice(0, 4), onAdd: proceed });
   }
 
   function quickAdd() {
     const n = draftName.trim();
     if (!n) return;
-    if (!guardAdd(n)) return;
-    setDraftName("");
-    setQuickSearch(n); // open the image picker for this name
+    withDupCheck(n, () => {
+      setDraftName("");
+      setQuickSearch(n); // open the image picker for this name
+    });
   }
 
   const q = search.trim().toLowerCase();
@@ -317,9 +404,11 @@ export function TierListPage() {
     level?: number;
     quick?: boolean;
     calm?: boolean;
+    wait?: boolean;
     onParry: (escalate: boolean) => void;
     onHit: () => void;
     onDone: () => void;
+    onSurrender?: () => void;
   }) => {
     const perStack = room.authUser?.combatBuff === "half" ? 0.05 : 0.1;
     return o.mode === "combo" ? (
@@ -332,10 +421,12 @@ export function TierListPage() {
         perStack={perStack}
         quick={o.quick}
         calm={o.calm}
+        wait={o.wait}
         items={attackItems()}
         onParry={o.onParry}
         onHit={o.onHit}
         onDone={o.onDone}
+        onSurrender={o.onSurrender}
       />
     ) : (
       <AttackEffect
@@ -347,10 +438,12 @@ export function TierListPage() {
         perStack={perStack}
         quick={o.quick}
         calm={o.calm}
+        wait={o.wait}
         items={attackItems()}
         onParry={o.onParry}
         onHit={o.onHit}
         onDone={o.onDone}
+        onSurrender={o.onSurrender}
       />
     );
   };
@@ -468,6 +561,68 @@ export function TierListPage() {
                   >
                     <Gamepad2 className="size-4" /> 콤보 연습
                   </button>
+                  <div className="px-3 pt-1.5 pb-1 flex items-center gap-2 text-[13px] text-foreground">
+                    <Blocks className="size-4" /> 테트리스 연습
+                  </div>
+                  <div className="flex gap-1.5 px-3 pb-1.5">
+                    {([
+                      { s: 60, name: "1분" },
+                      { s: 180, name: "3분" },
+                      { s: 300, name: "5분" },
+                    ] as const).map((d) => (
+                      <button
+                        key={d.s}
+                        type="button"
+                        onClick={() => {
+                          setAcct(false);
+                          startSolo("tetris", d.s);
+                        }}
+                        className="flex-1 rounded-[6px] border border-border px-2 py-1.5 text-[12px] font-bold text-foreground hover:bg-accent"
+                      >
+                        {d.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="px-3 pt-1.5 pb-1 flex items-center gap-2 text-[13px] text-foreground">
+                    <Bot className="size-4" /> 테트리스 봇 대전
+                  </div>
+                  <div className="flex gap-1.5 px-3 pb-1">
+                    {([
+                      { s: 60, name: "1분" },
+                      { s: 180, name: "3분" },
+                      { s: 300, name: "5분" },
+                    ] as const).map((d) => (
+                      <button
+                        key={d.s}
+                        type="button"
+                        onClick={() => setBotSeconds(d.s)}
+                        className={`flex-1 rounded-[6px] border px-2 py-1 text-[11px] font-bold ${botSeconds === d.s ? "" : "border-border text-foreground hover:bg-accent"}`}
+                        style={botSeconds === d.s ? { borderColor: "#6366F1", background: "rgba(99,102,241,.14)", color: "#A5B4FC" } : undefined}
+                      >
+                        {d.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5 px-3 pb-1.5">
+                    {([
+                      { d: "easy", name: "쉬움" },
+                      { d: "normal", name: "보통" },
+                      { d: "hard", name: "어려움" },
+                    ] as const).map((b) => (
+                      <button
+                        key={b.d}
+                        type="button"
+                        onClick={() => {
+                          setAcct(false);
+                          setBotResult(null);
+                          setBot({ difficulty: b.d, seconds: botSeconds, key: Date.now() });
+                        }}
+                        className="flex-1 rounded-[6px] border border-border px-2 py-1.5 text-[12px] font-bold text-foreground hover:bg-accent"
+                      >
+                        {b.name}
+                      </button>
+                    ))}
+                  </div>
                   <div className="my-1 border-t border-border" />
                   <button
                     type="button"
@@ -752,8 +907,8 @@ export function TierListPage() {
           }
           onProposeDecision={
             room.room
-              ? (tierId, mode) => {
-                  room.proposeDecision(menu.item.id, tierId, mode);
+              ? (tierId, mode, seconds) => {
+                  room.proposeDecision(menu.item.id, tierId, mode, seconds);
                   setMenu(null);
                 }
               : undefined
@@ -802,11 +957,13 @@ export function TierListPage() {
           onSubmit={(name, imageUrl) => {
             if (form.item) {
               controller.updateItem(form.item.id, { name, imageUrl });
+              setForm(null);
             } else {
-              if (!guardAdd(name)) return; // keep the dialog open to fix the name
-              controller.addItem(name, imageUrl);
+              withDupCheck(name, () => {
+                controller.addItem(name, imageUrl);
+                setForm(null);
+              });
             }
-            setForm(null);
           }}
           onDelete={
             form.item
@@ -829,6 +986,72 @@ export function TierListPage() {
           }}
           onClose={() => setBulk(false)}
         />
+      )}
+
+      {dup && (
+        <>
+          <div className="fixed inset-0 z-[84] bg-black/60" onClick={() => setDup(null)} />
+          <div
+            className="fixed top-1/2 left-1/2 z-[85] w-[380px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-[#242a3a] bg-[#13161D] p-5"
+            style={{ boxShadow: "0 24px 64px rgba(0,0,0,.6)", animation: "popIn .16s ease both" }}
+          >
+            <div className="mb-1 text-[15px] font-extrabold text-[#EDEAE2]">
+              {dup.verdict === "block" ? "이미 있는 항목이에요" : "비슷한 항목이 있어요"}
+            </div>
+            <div className="mb-3 text-[12px] text-[#8A8F9C]">
+              <b className="text-[#C4C8D2]">{dup.name}</b>
+              {dup.verdict === "block" ? " 은(는) 아래와 겹쳐 추가할 수 없어요." : " 와(과) 비슷한 항목:"}
+            </div>
+            <div className="mb-4 flex flex-col gap-1.5">
+              {dup.matches.map((m) => (
+                <div key={m.item.id} className="flex items-center gap-2.5 rounded-[7px] border border-[#242a3a] bg-[#0E1117] px-2.5 py-1.5">
+                  <div className="size-10 shrink-0 overflow-hidden rounded-[5px] border border-[#2A303C]">
+                    {m.item.imageUrl ? (
+                      <img src={m.item.imageUrl} alt="" className="size-full object-cover" />
+                    ) : (
+                      <div className="grid size-full place-items-center text-[12px] font-extrabold text-white" style={{ background: swatch(m.item.name) }}>
+                        {m.item.name.slice(0, 2)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-bold text-[#EDEAE2]">{m.item.name}</div>
+                    <div className="text-[11px] text-[#8A8F9C]">유사도 {Math.round(m.score * 100)}%</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {dup.verdict === "block" ? (
+              <button
+                type="button"
+                onClick={() => setDup(null)}
+                className="h-10 w-full rounded-[6px] bg-[#6366F1] text-[13px] font-bold text-white"
+              >
+                확인
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDup(null)}
+                  className="h-10 flex-1 rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[13px] font-semibold text-[#C4C8D2]"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    dup.onAdd();
+                    setDup(null);
+                  }}
+                  className="h-10 flex-1 rounded-[6px] bg-[#6366F1] text-[13px] font-bold text-white"
+                >
+                  그래도 추가
+                </button>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {quickSearch && (
@@ -870,7 +1093,8 @@ export function TierListPage() {
       )}
 
       {memberView && room.room && room.authUser && (() => {
-        const canAttack = canModerate || room.authUser.unlocked.includes("attack");
+        // 연습 결투는 로그인한 모든 참가자가 서로 신청할 수 있다 (권한 제한 없음).
+        const canAttack = true;
         const live = room.room.members.find((m) => m.userId === memberView.userId) ?? memberView;
         const isSelf = memberView.userId === room.authUser.id;
         return (
@@ -881,8 +1105,8 @@ export function TierListPage() {
             canGrantAdmin={room.authUser.isAdmin}
             canAttack={canAttack}
             attackReadyAt={memberView.userId ? attackCd[memberView.userId] ?? 0 : 0}
-            onModerate={(action, seconds) => {
-              room.moderate(action, memberView.userId, seconds);
+            onModerate={(action, seconds, mode) => {
+              room.moderate(action, memberView.userId, seconds, mode);
               if (action === "attack" && memberView.userId)
                 setAttackCd((c) => ({ ...c, [memberView.userId!]: Date.now() + 5_000 }));
               if (action === "kick") setMemberView(null);
@@ -920,13 +1144,76 @@ export function TierListPage() {
           by: room.attack.by,
           parryable: room.attack.parryable,
           level: room.attack.level,
+          // Practice 1:1 → wait for the opponent's reflect. Decision matches run
+          // their own bracket flow (DecisionCard), so they clear fast instead.
+          wait: !room.attack.decision,
+          // No red strobe anywhere — every duel (practice + 결정전) uses the calm
+          // CRT backdrop.
+          calm: true,
           onParry: (escalate) => room.attack?.byUserId && room.parryAttack(room.attack.byUserId, escalate),
           onHit: () => room.attack?.byUserId && room.rallyHit(room.attack.byUserId),
           onDone: room.clearAttack,
+          // 항복: concede → I take the hit (opponent wins), then close the overlay.
+          onSurrender: () => {
+            if (room.attack?.byUserId) room.rallyHit(room.attack.byUserId);
+            room.clearAttack();
+          },
         })}
 
-      {/* Admin solo practice — opponent always escalates: parry → level+1, miss → end. */}
+      {/* Solo practice — Tetris is a standalone time-attack; parry games loop. */}
+      {solo && solo.mode === "tetris" && (
+        <TetrisGame
+          key={solo.key}
+          by={room.authUser?.nickname ?? "연습"}
+          startSeconds={solo.seconds ?? 60}
+          lives={room.authUser?.combatBuff === "life" ? 1 : 0}
+          onGameOver={() => {}}
+          onSurrender={() => setSolo(null)}
+          onClose={() => setSolo(null)}
+        />
+      )}
+
+      {/* 봇 대전 — client-side Tetris AI opponent (same board/UI as multiplayer). */}
+      {bot && !botResult && (
+        <TetrisGame
+          key={bot.key}
+          by={room.authUser?.nickname ?? "나"}
+          startSeconds={bot.seconds}
+          getOpponent={botGetOpp}
+          deltaRef={botDeltaRef}
+          garbageRef={botGarbageRef}
+          lives={room.authUser?.combatBuff === "life" ? 1 : 0}
+          onClear={botOnClear}
+          onGameOver={botOnGameOver}
+          onSurrender={botOnGameOver}
+          onClose={closeBot}
+        />
+      )}
+      {bot && botResult && (
+        <div className="fixed inset-0 z-[216] grid place-items-center bg-black/75 select-none" onClick={closeBot}>
+          <div className="flex flex-col items-center gap-3" style={{ animation: "slam .5s steps(4) both" }}>
+            {botResult === "win" ? (
+              <>
+                <Trophy className="size-14" style={{ color: "#FDE047", filter: "drop-shadow(4px 4px 0 #000)" }} strokeWidth={2.4} />
+                <div style={{ fontFamily: ARCADE, fontSize: 40, color: "#FDE047", textShadow: "5px 5px 0 #000, 0 0 24px rgba(253,224,71,.8)" }}>YOU WIN!</div>
+                <div style={{ fontFamily: PIXEL, fontSize: 14, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{BOT_LABEL[bot.difficulty]} 격파!</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontFamily: ARCADE, fontSize: 38, color: "#F87171", textShadow: "5px 5px 0 #000" }}>DEFEAT</div>
+                <div style={{ fontFamily: PIXEL, fontSize: 14, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>{BOT_LABEL[bot.difficulty]}에게 패배…</div>
+              </>
+            )}
+            <button type="button" onClick={(e) => { e.stopPropagation(); closeBot(); }} style={{ marginTop: 6, fontFamily: ARCADE, fontSize: 13, color: "#06121A", background: "#22D3EE", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 18px", cursor: "pointer" }}>
+              EXIT
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Parry solo practice — opponent always escalates: parry → level+1, miss → end. */}
       {solo &&
+        solo.mode !== "tetris" &&
         renderDuel({
           mode: solo.mode,
           keyId: solo.key,
@@ -959,10 +1246,86 @@ export function TierListPage() {
               setSolo(null);
             }
           },
+          // 항복: end the practice run at the current level.
+          onSurrender: () => {
+            setSoloEnd(solo ? { mode: solo.mode, level: solo.level } : null);
+            setSolo(null);
+          },
         })}
 
+      {/* 테트리스 대전 (multiplayer): both play at once; opponent shown at half size. */}
+      {room.tetris && !tetrisLost && (
+        <TetrisGame
+          key={room.tetris.at}
+          by={room.authUser?.nickname ?? "나"}
+          startSeconds={room.tetris.seconds}
+          getOpponent={tetrisGetOpp}
+          deltaRef={room.tetrisDeltaRef}
+          garbageRef={room.tetrisGarbageRef}
+          startGarbage={room.tetris.startGarbage ?? 0}
+          lives={room.tetris.lives ?? 0}
+          onClear={tetrisOnClear}
+          onBoard={tetrisOnBoard}
+          onGameOver={tetrisOnGameOver}
+          onSurrender={tetrisOnGameOver}
+          onClose={() => {
+            room.clearTetris();
+            setTetrisLost(false);
+          }}
+        />
+      )}
+
+      {/* 테트리스 승리 통보 */}
+      {room.tetrisWin && (
+        <div className="fixed inset-0 z-[216] grid place-items-center bg-black/75 select-none" onClick={() => room.clearTetrisWin()}>
+          <div className="flex flex-col items-center gap-3" style={{ animation: "slam .5s steps(4) both" }}>
+            <Trophy className="size-14" style={{ color: "#FDE047", filter: "drop-shadow(4px 4px 0 #000)" }} strokeWidth={2.4} />
+            <div style={{ fontFamily: ARCADE, fontSize: 40, color: "#FDE047", textShadow: "5px 5px 0 #000, 0 0 24px rgba(253,224,71,.8)" }}>YOU WIN!</div>
+            <div style={{ fontFamily: PIXEL, fontSize: 15, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{room.tetrisWin.by}에게 승리!</div>
+            <div style={{ fontFamily: PIXEL, fontSize: 12, color: "#9AD8E8" }}>테트리스 대전</div>
+          </div>
+        </div>
+      )}
+
+      {/* 테트리스 패배 */}
+      {tetrisLost && (
+        <div
+          className="fixed inset-0 z-[216] grid place-items-center bg-black/75 select-none"
+          onClick={() => {
+            setTetrisLost(false);
+            room.clearTetris();
+          }}
+        >
+          <div className="flex flex-col items-center gap-3" style={{ animation: "slam .5s steps(4) both" }}>
+            <div style={{ fontFamily: ARCADE, fontSize: 38, color: "#F87171", textShadow: "5px 5px 0 #000" }}>DEFEAT</div>
+            <div style={{ fontFamily: PIXEL, fontSize: 14, fontWeight: 700, color: "#FFD0C8", textShadow: "2px 2px 0 #000" }}>{tetrisBy ?? "상대"}에게 패배…</div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setTetrisLost(false);
+                room.clearTetris();
+              }}
+              style={{ marginTop: 6, fontFamily: ARCADE, fontSize: 13, color: "#06121A", background: "#22D3EE", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 18px", cursor: "pointer" }}
+            >
+              EXIT
+            </button>
+          </div>
+        </div>
+      )}
+
+      {room.duelWin && (
+        <div className="fixed inset-0 z-[215] grid place-items-center bg-black/70 select-none" onClick={() => room.clearDuelWin()}>
+          <div className="flex flex-col items-center gap-3" style={{ animation: "slam .5s steps(4) both" }}>
+            <Trophy className="size-14" style={{ color: "#FDE047", filter: "drop-shadow(4px 4px 0 #000)" }} strokeWidth={2.4} />
+            <div style={{ fontFamily: ARCADE, fontSize: 40, color: "#FDE047", textShadow: "5px 5px 0 #000, 0 0 24px rgba(253,224,71,.8)" }}>YOU WIN!</div>
+            <div style={{ fontFamily: PIXEL, fontSize: 15, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{room.duelWin.by}에게 승리!</div>
+          </div>
+        </div>
+      )}
+
       {soloNote && (
-        <div className="pointer-events-none fixed inset-0 z-[110] grid place-items-center select-none">
+        <div className="pointer-events-none fixed inset-0 z-[210] grid place-items-center select-none">
           <div className="flex flex-col items-center gap-2.5" style={{ animation: "slam .4s steps(4) both" }}>
             <div
               className="grid size-[78px] place-items-center"
@@ -978,7 +1341,7 @@ export function TierListPage() {
 
       {soloEnd && (
         <div
-          className="fixed inset-0 z-[96] flex items-center justify-center bg-black/75"
+          className="fixed inset-0 z-[205] flex items-center justify-center bg-black/75"
           onClick={() => setSoloEnd(null)}
         >
           <div

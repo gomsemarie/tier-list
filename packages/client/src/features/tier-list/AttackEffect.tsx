@@ -13,9 +13,10 @@ export type { AttackItem } from "./duelChrome";
 function timingScene(ss: number, p: { level: number; perStack: number; onResult: DuelResult }) {
   const lv = Math.max(0, Math.floor(p.level));
   const shrink = Math.pow(1 - p.perStack, lv);
-  const reflectHalf = Math.max(0.6, 14 * shrink); // inner zone, % each side of center
-  const blockHalf = Math.max(reflectHalf + 1, 28 * shrink); // outer zone
-  const duration = Math.max(200, 1500 / Math.pow(1 + p.perStack, lv)); // one traverse
+  // Low floors so difficulty keeps rising (no plateau) — it eventually ends.
+  const reflectHalf = Math.max(0.35, 14 * shrink); // inner zone, % each side of center
+  const blockHalf = Math.max(reflectHalf + 0.8, 28 * shrink); // outer zone
+  const duration = Math.max(95, 1500 / Math.pow(1 + p.perStack, lv)); // one traverse
   const TOTAL = 3000; // overall window before an automatic miss
   const W = DUEL_VW * ss;
   const u = (n: number) => n * ss;

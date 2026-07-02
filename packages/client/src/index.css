@@ -715,6 +715,7 @@
 @keyframes drift2{0%{transform:translate(0,0);}50%{transform:translate(-50px,30px);}100%{transform:translate(-15px,70px);}}
 @keyframes badgeUp{0%{opacity:0;transform:translateY(4px) scale(.8);}30%{opacity:1;transform:none;}80%{opacity:1;}100%{opacity:0;}}
 @keyframes glitch{0%{transform:translate(0,0);}25%{transform:translate(-3px,1px);}50%{transform:translate(3px,-1px);}75%{transform:translate(-2px,-2px);}100%{transform:translate(0,0);}}
+@keyframes retroBreath{0%,100%{opacity:.5;}50%{opacity:.95;}}
 @keyframes holoPan{from{background-position:0% 50%;}to{background-position:300% 50%;}}
 @keyframes glowPulse{0%,100%{box-shadow:0 0 10px 0 rgba(255,255,255,.3);}50%{box-shadow:0 0 22px 4px rgba(255,255,255,.55);}}
 @keyframes twinkle{0%,100%{opacity:.25;transform:scale(.7);}50%{opacity:1;transform:scale(1.15);}}

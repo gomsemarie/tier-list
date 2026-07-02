@@ -1,0 +1,593 @@
+/* Phaser is lazy-loaded and untyped here; `this` is the live Scene. */
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-this-alias */
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
+
+import { ARCADE, PIXEL, DuelTitle, RetroBackdrop } from "./duelChrome";
+import { COLS, ROWS, CI, COLORS, SHAPES, KICK_JLSTZ, KICK_I, computeGarbage, isPerfectClear, type Piece } from "./tetrisCore";
+
+export type TetrisOpponent = { grid: number[][]; seconds: number; name: string } | null;
+
+type TetrisGameProps = {
+  by: string;
+  /** Seconds on the clock at the start. Time only ticks *down* (drain-only). */
+  startSeconds?: number;
+  /** Opponent board for the live side view (multiplayer); null in solo. */
+  getOpponent?: () => TetrisOpponent;
+  /** Accumulated seconds to add to my clock — opponent's clears push negatives. */
+  deltaRef?: MutableRefObject<number>;
+  /** Garbage lines queued from the opponent's clears (Tetrio-style). */
+  garbageRef?: MutableRefObject<number>;
+  /** Pre-stacked garbage rows at the start (결정전 공격/debt handicap). */
+  startGarbage?: number;
+  /** 목숨 skill: extra revives — a top-out clears the board and continues. */
+  lives?: number;
+  /** Each line-clear lock → (lines, garbage) I send to the opponent. */
+  onClear?: (lines: number, garbage: number) => void;
+  /** Snapshot of my board each lock (for the opponent's live view). */
+  onBoard?: (grid: number[][], seconds: number) => void;
+  /** Top-out or clock ran out → final line count. */
+  onGameOver: (lines: number) => void;
+  /** 항복: concede this game (multiplayer → opponent wins; solo → just ends). */
+  onSurrender?: () => void;
+  onClose: () => void;
+};
+
+type SceneParams = {
+  startSeconds: number;
+  startGarbage?: number;
+  lives?: number;
+  /** Multiplayer: always reserve/draw the opponent panel (even before data). */
+  showOpp?: boolean;
+  onClear?: (lines: number, garbage: number) => void;
+  onBoard?: (g: number[][], s: number) => void;
+  onGameOver: (l: number) => void;
+  getOpp: () => TetrisOpponent;
+  drainDelta: () => number;
+  drainGarbage: () => number;
+};
+
+function tetrisScene(ss: number, p: SceneParams) {
+  const u = (n: number) => n * ss;
+  const font = (n: number) => `${n * ss}px`;
+  const CELL = u(15);
+  const BX = u(150);
+  const BY = u(104);
+  const OC = u(8); // opponent cell
+  const OX = u(432);
+  // Bottom-align the opponent board with mine (both bottom edges at the same y).
+  const OY = BY + ROWS * CELL - ROWS * OC;
+  const startMs = p.startSeconds * 1000;
+  // Circular timer sits centered *above* the board, clear of the playfield.
+  const boardMidX = BX + (COLS * CELL) / 2;
+  const timerCx = boardMidX;
+  const timerCy = u(46);
+  const timerR = u(30);
+
+  return {
+    key: "tetris",
+    create: function (this: any) {
+      const s = this;
+      s.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      s.bag = [] as Piece[];
+      s.next = [] as Piece[];
+      s.hold = null as Piece | null;
+      s.holdUsed = false;
+      s.lines = 0;
+      s.time = startMs;
+      // Score = total seconds I've drained from the opponent (2s per line cleared).
+      // oppDealt = the mirror: seconds the opponent has drained from me.
+      s.dealt = 0;
+      s.oppDealt = 0;
+      s.over = false;
+      s.dropAcc = 0;
+      s.dropInterval = 750;
+      s.lockAcc = 0;
+      s.das = { dir: 0, t: 0, charged: false };
+      s.incoming = 0; // pending garbage lines to receive
+      s.combo = -1;
+      s.b2b = false;
+      s.spin = false; // last successful action was a rotation (for t-spin)
+      s.lives = Math.max(0, Math.floor(p.lives ?? 0)); // 목숨: top-out revives
+      s.reviveFlash = 0;
+
+      const refill = () => {
+        const b: Piece[] = ["I", "J", "L", "O", "S", "T", "Z"];
+        for (let i = b.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [b[i], b[j]] = [b[j], b[i]];
+        }
+        s.bag.push(...b);
+      };
+      const pull = (): Piece => {
+        if (s.bag.length === 0) refill();
+        return s.bag.shift();
+      };
+      while (s.next.length < 5) s.next.push(pull());
+
+      const cellsOf = (type: Piece, rot: number, px: number, py: number): number[][] => SHAPES[type][rot].map(([c, r]) => [px + c, py + r]);
+      const collide = (type: Piece, rot: number, px: number, py: number) =>
+        cellsOf(type, rot, px, py).some(([c, r]) => c < 0 || c >= COLS || r >= ROWS || (r >= 0 && s.grid[r][c] !== 0));
+      s.collide = collide;
+      const canDown = () => !collide(s.cur.type, s.cur.rot, s.cur.x, s.cur.y + 1);
+      // T-spin: 3+ of the T-piece's four diagonal box-corners are blocked.
+      const blocked = (c: number, r: number) => c < 0 || c >= COLS || r >= ROWS || (r >= 0 && s.grid[r][c] !== 0);
+      const isTSpin = () => {
+        if (s.cur.type !== "T" || !s.spin) return false;
+        const { x, y } = s.cur;
+        let n = 0;
+        for (const [cx, cy] of [[0, 0], [2, 0], [0, 2], [2, 2]]) if (blocked(x + cx, y + cy)) n++;
+        return n >= 3;
+      };
+
+      const spawn = () => {
+        const type = s.next.shift() as Piece;
+        s.next.push(pull());
+        s.cur = { type, rot: 0, x: 3, y: -1 };
+        s.holdUsed = false;
+        s.lockAcc = 0;
+        s.dropAcc = 0;
+        s.spin = false;
+        if (collide(type, 0, s.cur.x, s.cur.y)) end();
+      };
+      const end = () => {
+        if (s.over) return;
+        // 목숨: a top-out spends a life — wipe the board and keep playing.
+        if (s.lives > 0) {
+          s.lives -= 1;
+          s.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+          s.incoming = 0;
+          s.lockAcc = 0;
+          s.reviveFlash = 1000;
+          spawn();
+          return;
+        }
+        s.over = true;
+        p.onGameOver(s.lines);
+      };
+      // Materialize incoming garbage: push gray rows (one shared hole) up from the
+      // bottom; if a filled row is shoved past the top, it's a top-out.
+      const addGarbage = (n: number) => {
+        const hole = Math.floor(Math.random() * COLS);
+        for (let i = 0; i < n; i++) {
+          if (s.grid[0].some((v: number) => v !== 0)) { end(); return; }
+          s.grid.shift();
+          const row = Array(COLS).fill(8);
+          row[hole] = 0;
+          s.grid.push(row);
+        }
+      };
+      const lock = () => {
+        for (const [c, r] of cellsOf(s.cur.type, s.cur.rot, s.cur.x, s.cur.y)) {
+          if (r < 0) { end(); return; }
+          s.grid[r][c] = CI[s.cur.type as Piece];
+        }
+        let cleared = 0;
+        for (let r = ROWS - 1; r >= 0; r--) {
+          if (s.grid[r].every((v: number) => v !== 0)) {
+            s.grid.splice(r, 1);
+            s.grid.unshift(Array(COLS).fill(0));
+            cleared++;
+            r++;
+          }
+        }
+        if (cleared > 0) {
+          s.lines += cleared;
+          const tspin = isTSpin();
+          const difficult = cleared === 4 || tspin;
+          s.combo++;
+          const perfect = isPerfectClear(s.grid);
+          const g = computeGarbage(cleared, tspin, s.b2b, s.combo, perfect);
+          s.b2b = difficult;
+          // Cancel incoming garbage 1:1 before sending the remainder.
+          const cancel = Math.min(g, s.incoming);
+          s.incoming -= cancel;
+          const net = g - cancel;
+          // My clears only drain the opponent's clock (never grow mine), so the
+          // match always converges. `net` is the garbage to stack on them.
+          s.dealt += 2 * cleared; // score = seconds drained from the opponent
+          p.onClear?.(cleared, net);
+        } else {
+          s.combo = -1;
+          if (s.incoming > 0) { addGarbage(s.incoming); s.incoming = 0; }
+        }
+        p.onBoard?.(s.grid.map((row: number[]) => row.slice()), s.time / 1000);
+        if (!s.over) spawn();
+      };
+      s.lockNow = lock; // update() calls this when the lock delay expires
+      const move = (dx: number) => {
+        if (!s.over && !collide(s.cur.type, s.cur.rot, s.cur.x + dx, s.cur.y)) {
+          s.cur.x += dx;
+          s.lockAcc = 0;
+          s.spin = false;
+        }
+      };
+      const rotate = (dir: 1 | -1) => {
+        if (s.over || s.cur.type === "O") return;
+        const from = s.cur.rot;
+        const to = (from + (dir === 1 ? 1 : 3)) % 4;
+        const kicks = (s.cur.type === "I" ? KICK_I : KICK_JLSTZ)[`${from}${to}`] ?? [[0, 0]];
+        for (const [kx, ky] of kicks) {
+          if (!collide(s.cur.type, to, s.cur.x + kx, s.cur.y + ky)) {
+            s.cur.rot = to;
+            s.cur.x += kx;
+            s.cur.y += ky;
+            s.lockAcc = 0;
+            s.spin = true;
+            return;
+          }
+        }
+      };
+      const rotate180 = () => {
+        if (s.over || s.cur.type === "O") return;
+        const to = (s.cur.rot + 2) % 4;
+        for (const [kx, ky] of [[0, 0], [0, -1], [0, 1], [1, 0], [-1, 0], [1, -1], [-1, -1]]) {
+          if (!collide(s.cur.type, to, s.cur.x + kx, s.cur.y + ky)) {
+            s.cur.rot = to;
+            s.cur.x += kx;
+            s.cur.y += ky;
+            s.lockAcc = 0;
+            s.spin = true;
+            return;
+          }
+        }
+      };
+      const hardDrop = () => {
+        if (s.over) return;
+        while (canDown()) s.cur.y += 1;
+        lock();
+      };
+      const holdSwap = () => {
+        if (s.over || s.holdUsed) return;
+        const cur = s.cur.type;
+        if (s.hold) {
+          const h = s.hold;
+          s.hold = cur;
+          s.cur = { type: h, rot: 0, x: 3, y: -1 };
+          s.spin = false;
+          if (collide(h, 0, 3, -1)) { end(); return; }
+        } else {
+          s.hold = cur;
+          spawn();
+        }
+        s.holdUsed = true;
+        s.lockAcc = 0;
+      };
+      // 결정전 handicap: pre-stack N garbage rows (one shared hole) from the bottom.
+      const seed = Math.min(ROWS - 4, Math.max(0, Math.floor(p.startGarbage ?? 0)));
+      if (seed > 0) {
+        const hole = Math.floor(Math.random() * COLS);
+        for (let i = 0; i < seed; i++) {
+          const row = Array(COLS).fill(8);
+          row[hole] = 0;
+          s.grid[ROWS - 1 - i] = row;
+        }
+      }
+      spawn();
+
+      const kb = s.input.keyboard;
+      kb.addCapture(["LEFT", "RIGHT", "DOWN", "UP", "SPACE", "Z", "X", "A", "C", "SHIFT"]);
+      s.keyDown = kb.addKey("DOWN");
+      kb.on("keydown-LEFT", () => { move(-1); s.das = { dir: -1, t: 0, charged: false }; });
+      kb.on("keydown-RIGHT", () => { move(1); s.das = { dir: 1, t: 0, charged: false }; });
+      kb.on("keyup-LEFT", () => { if (s.das.dir === -1) s.das.dir = 0; });
+      kb.on("keyup-RIGHT", () => { if (s.das.dir === 1) s.das.dir = 0; });
+      kb.on("keydown-UP", () => rotate(1));
+      kb.on("keydown-X", () => rotate(1));
+      kb.on("keydown-Z", () => rotate(-1));
+      kb.on("keydown-A", () => rotate180());
+      kb.on("keydown-SPACE", () => hardDrop());
+      kb.on("keydown-C", () => holdSwap());
+      kb.on("keydown-SHIFT", () => holdSwap());
+
+      s.g = s.add.graphics();
+      // Big number inside the ring = remaining seconds. Scores are the
+      // drained-seconds sums (Korean labels → PIXEL font renders Hangul).
+      s.timerText = s.add.text(timerCx, timerCy, "", { fontFamily: ARCADE, fontSize: font(16), color: "#FDE047" }).setOrigin(0.5);
+      s.myScore = s.add.text(u(20), u(28), "", { fontFamily: PIXEL, fontSize: font(13), color: "#67E8F9" }).setOrigin(0, 0.5);
+      s.oppScore = s.add.text(u(540), u(28), "", { fontFamily: PIXEL, fontSize: font(12), color: "#FCA5A5" }).setOrigin(1, 0.5);
+      s.oppInfo = s.add.text(OX, OY - u(6), "", { fontFamily: PIXEL, fontSize: font(11), color: "#9AA0AD" }).setOrigin(0, 1);
+      s.oppWait = s.add.text(OX + (COLS * OC) / 2, OY + (ROWS * OC) / 2, "", { fontFamily: PIXEL, fontSize: font(11), color: "#6A707E", align: "center" }).setOrigin(0.5).setVisible(false);
+      s.statText = s.add.text(boardMidX, BY + ROWS * CELL + u(14), "", { fontFamily: PIXEL, fontSize: font(12), color: "#9AD8E8" }).setOrigin(0.5);
+      s.reviveText = s.add.text(boardMidX, BY + (ROWS * CELL) / 2, "REVIVE", { fontFamily: ARCADE, fontSize: font(22), color: "#FF6B8A" }).setOrigin(0.5).setVisible(false);
+
+      // --- drawing ---
+      const box = (g: any, x: number, y: number, w: number, h: number) => {
+        g.fillStyle(0x0b0e16, 0.92);
+        g.fillRect(x, y, w, h);
+        g.lineStyle(u(2), 0x2a303c, 1);
+        g.strokeRect(x, y, w, h);
+      };
+      const cell = (g: any, x: number, y: number, ci: number, size: number) => {
+        if (!ci) return;
+        g.fillStyle(COLORS[ci], 1);
+        g.fillRect(x + 1, y + 1, size - 2, size - 2);
+        g.fillStyle(0xffffff, 0.14);
+        g.fillRect(x + 1, y + 1, size - 2, u(2));
+      };
+      const timer = (g: any) => {
+        const frac = Math.max(0, Math.min(1, s.time / startMs));
+        const col = frac < 0.15 ? 0xef4444 : frac < 0.33 ? 0xf59e0b : 0x22d3ee;
+        g.lineStyle(u(6), 0x1b2130, 1);
+        g.beginPath();
+        g.arc(timerCx, timerCy, timerR, 0, Math.PI * 2);
+        g.strokePath();
+        if (frac > 0) {
+          g.lineStyle(u(6), col, 1);
+          g.beginPath();
+          g.arc(timerCx, timerCy, timerR, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+          g.strokePath();
+        }
+      };
+      // Vertical time gauge hugging the right edge of my board — drains from the
+      // top, green → yellow → red as it empties, so time is visible at eye level.
+      const GX = BX + COLS * CELL + u(6);
+      const GW = u(12);
+      const GH = ROWS * CELL;
+      const timeGauge = (g: any) => {
+        const frac = Math.max(0, Math.min(1, s.time / startMs));
+        const col = frac > 0.5 ? 0x22c55e : frac > 0.2 ? 0xfacc15 : 0xef4444;
+        g.fillStyle(0x0b0e16, 0.92);
+        g.fillRect(GX, BY, GW, GH);
+        const fh = frac * GH;
+        if (fh > 0) {
+          g.fillStyle(col, 1);
+          g.fillRect(GX + u(1), BY + GH - fh + u(1), GW - u(2), Math.max(0, fh - u(2)));
+        }
+        g.lineStyle(u(2), 0x2a303c, 1);
+        g.strokeRect(GX, BY, GW, GH);
+      };
+      s.draw = () => {
+        const g = s.g;
+        g.clear();
+        timer(g);
+        timeGauge(g);
+        box(g, BX - u(3), BY - u(3), COLS * CELL + u(6), ROWS * CELL + u(6));
+        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) cell(g, BX + c * CELL, BY + r * CELL, s.grid[r][c], CELL);
+        if (s.cur && !s.over) {
+          let gy = s.cur.y;
+          while (!collide(s.cur.type, s.cur.rot, s.cur.x, gy + 1)) gy++;
+          const ci = CI[s.cur.type as Piece];
+          for (const [c, r] of SHAPES[s.cur.type as Piece][s.cur.rot]) {
+            if (gy + r >= 0) {
+              g.lineStyle(u(1), COLORS[ci], 0.45);
+              g.strokeRect(BX + (s.cur.x + c) * CELL + 1, BY + (gy + r) * CELL + 1, CELL - 2, CELL - 2);
+            }
+          }
+          for (const [c, r] of SHAPES[s.cur.type as Piece][s.cur.rot]) if (s.cur.y + r >= 0) cell(g, BX + (s.cur.x + c) * CELL, BY + (s.cur.y + r) * CELL, ci, CELL);
+        }
+        // incoming-garbage warning bar (right edge of my board)
+        if (s.incoming > 0) {
+          const gh = Math.min(ROWS, s.incoming) * CELL;
+          g.fillStyle(0xef4444, 0.85);
+          // Incoming-garbage warning hugs the *left* edge (time gauge is on the right).
+          g.fillRect(BX - u(9), BY + ROWS * CELL - gh, u(5), gh);
+        }
+        const mini = (type: Piece | null, mx: number, my: number) => {
+          box(g, mx, my, u(56), u(44));
+          if (type) for (const [c, r] of SHAPES[type][0]) cell(g, mx + u(7) + c * u(10), my + u(9) + r * u(10), CI[type], u(10));
+        };
+        mini(s.hold, u(24), BY);
+        s.next.slice(0, 3).forEach((t: Piece, i: number) => mini(t, BX + COLS * CELL + u(24), BY + i * u(50)));
+        s.timerText.setText(`${Math.ceil(Math.max(0, s.time) / 1000)}`);
+        s.myScore.setText(`내 점수 ${s.dealt}`);
+        s.statText.setText(`${s.lines}L${s.combo > 0 ? ` · ${s.combo} COMBO` : ""}${s.lives > 0 ? ` · 목숨 ${s.lives}` : ""}`);
+        s.reviveText.setVisible(s.reviveFlash > 0);
+        const opp = p.getOpp();
+        if (p.showOpp) {
+          // Always reserve the opponent panel on the right (multiplayer), even
+          // before their first board arrives, so it's clearly present.
+          box(g, OX, OY, COLS * OC, ROWS * OC);
+          if (opp) {
+            for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (opp.grid[r]?.[c]) cell(g, OX + c * OC, OY + r * OC, opp.grid[r][c], OC);
+            s.oppInfo.setText(`상대 · ${opp.name}`);
+            s.oppScore.setText(`상대 점수 ${s.oppDealt}`);
+          } else {
+            s.oppWait.setText("상대\n대기중…");
+            s.oppInfo.setText("상대");
+            s.oppScore.setText(`상대 점수 ${s.oppDealt}`);
+          }
+          s.oppWait.setVisible(!opp);
+        } else {
+          s.oppInfo.setText("");
+          s.oppScore.setText("");
+          s.oppWait.setVisible(false);
+        }
+      };
+      s.draw();
+    },
+    update: function (this: any, _t: number, dt: number) {
+      const s = this;
+      if (s.reviveFlash > 0) s.reviveFlash -= dt;
+      if (!s.over) {
+        s.time -= dt;
+        const dd = p.drainDelta(); // opponent's clears drain my clock (negative)
+        s.time += dd * 1000;
+        if (dd < 0) s.oppDealt += -dd; // mirror score: seconds the opponent drained from me
+        s.incoming += p.drainGarbage(); // opponent's clears queue garbage on me
+        if (s.time <= 0) { s.time = 0; s.over = true; p.onGameOver(s.lines); }
+        // DAS auto-repeat
+        if (s.das.dir !== 0 && !s.over) {
+          s.das.t += dt;
+          const delay = s.das.charged ? 40 : 150;
+          if (s.das.t >= delay) {
+            s.das.t = 0;
+            s.das.charged = true;
+            if (!s.collide(s.cur.type, s.cur.rot, s.cur.x + s.das.dir, s.cur.y)) { s.cur.x += s.das.dir; s.lockAcc = 0; s.spin = false; }
+          }
+        }
+        // gravity + lock
+        if (!s.over) {
+          const soft = s.keyDown.isDown;
+          s.dropAcc += dt;
+          if (s.dropAcc >= (soft ? 45 : s.dropInterval)) {
+            s.dropAcc = 0;
+            if (!s.collide(s.cur.type, s.cur.rot, s.cur.x, s.cur.y + 1)) { s.cur.y += 1; s.spin = false; }
+          }
+          if (s.collide(s.cur.type, s.cur.rot, s.cur.x, s.cur.y + 1)) {
+            s.lockAcc += dt;
+            if (s.lockAcc >= 500) s.lockNow();
+          } else s.lockAcc = 0;
+        }
+      }
+      s.draw();
+    },
+  } as any;
+}
+
+/** Full-screen Tetris time-attack. Solo = pure practice; multiplayer feeds an
+ *  opponent board + drain/garbage via refs. */
+export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garbageRef, startGarbage = 0, lives = 0, onClear, onBoard, onGameOver, onSurrender, onClose }: TetrisGameProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const doneRef = useRef(false);
+  const [over, setOver] = useState<{ lines: number } | null>(null);
+  const [confirmGiveUp, setConfirmGiveUp] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let game: any;
+    (async () => {
+      const Phaser = (await import("phaser")).default;
+      if (cancelled || !ref.current) return;
+      const ss = Math.min(3, Math.max(2, Math.round(window.devicePixelRatio || 1)));
+      const scene: any = tetrisScene(ss, {
+        startSeconds,
+        startGarbage,
+        lives,
+        showOpp: !!getOpponent,
+        onClear,
+        onBoard,
+        getOpp: () => getOpponent?.() ?? null,
+        drainDelta: () => {
+          const d = deltaRef?.current ?? 0;
+          if (deltaRef) deltaRef.current = 0;
+          return d;
+        },
+        drainGarbage: () => {
+          const d = garbageRef?.current ?? 0;
+          if (garbageRef) garbageRef.current = 0;
+          return d;
+        },
+        onGameOver: (lines) => {
+          if (doneRef.current) return;
+          doneRef.current = true;
+          setOver({ lines });
+          onGameOver(lines);
+        },
+      });
+      game = new Phaser.Game({
+        type: Phaser.CANVAS,
+        width: 560 * ss,
+        height: 470 * ss,
+        parent: ref.current,
+        transparent: true,
+        scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+        render: { antialias: true, roundPixels: false },
+        scene,
+      });
+    })();
+    return () => {
+      cancelled = true;
+      if (game) game.destroy(true);
+    };
+  }, [startSeconds, startGarbage, lives, getOpponent, deltaRef, garbageRef, onClear, onBoard, onGameOver]);
+
+  const giveUp = () => {
+    setConfirmGiveUp(false);
+    if (doneRef.current) return;
+    doneRef.current = true;
+    if (onSurrender) onSurrender();
+    else { setOver({ lines: 0 }); onGameOver(0); }
+  };
+
+  // Esc → ask to surrender (confirm dialog). Ignored once the game is over.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !doneRef.current) {
+        e.preventDefault();
+        setConfirmGiveUp((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const CONTROLS: [string, string][] = [
+    ["← →", "이동"],
+    ["↓", "소프트 드롭"],
+    ["Space", "하드 드롭"],
+    ["Z / X", "회전"],
+    ["A", "180° 회전"],
+    ["C / Shift", "홀드"],
+    ["Esc", "항복"],
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[200] overflow-hidden">
+      <RetroBackdrop phase={over ? "lose" : "play"} calm seed={startSeconds} />
+      {/* 항복 (surrender) — button + Esc, both open the confirm dialog. */}
+      {!over && (
+        <button
+          type="button"
+          onClick={() => setConfirmGiveUp(true)}
+          className="fixed right-4 top-4 z-[202]"
+          style={{ fontFamily: ARCADE, fontSize: 11, color: "#FFD0C8", background: "#2A1114", border: "2px solid #000", boxShadow: "2px 2px 0 #000", padding: "7px 10px", cursor: "pointer" }}
+        >
+          항복 (Esc)
+        </button>
+      )}
+      <div className="grid h-full place-items-center">
+        <div className="flex flex-col items-center gap-2 select-none">
+          <DuelTitle />
+          <div style={{ fontFamily: PIXEL, fontSize: 12, color: "#9AD8E8" }}>{by}</div>
+          <div className="flex items-center gap-4">
+            {/* 조작법 — to the left of the board, one control per line. */}
+            <div
+              className="hidden shrink-0 flex-col gap-2 sm:flex"
+              style={{ background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)", padding: "16px 14px" }}
+            >
+              <div style={{ fontFamily: ARCADE, fontSize: 12, color: "#67E8F9", textShadow: "2px 2px 0 #000", marginBottom: 4 }}>조작법</div>
+              {CONTROLS.map(([k, d]) => (
+                <div key={k} className="flex items-center gap-2.5">
+                  <span
+                    className="text-center"
+                    style={{ fontFamily: PIXEL, fontSize: 12, fontWeight: 700, color: "#FDE047", background: "#171B22", border: "2px solid #000", boxShadow: "2px 2px 0 #000", padding: "4px 7px", minWidth: 62 }}
+                  >
+                    {k}
+                  </span>
+                  <span style={{ fontFamily: PIXEL, fontSize: 12, color: "#C4C8D2" }}>{d}</span>
+                </div>
+              ))}
+            </div>
+            <div ref={ref} className="h-[705px] w-[840px] max-w-[80vw]" style={{ pointerEvents: "auto", background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)" }} />
+          </div>
+        </div>
+        {confirmGiveUp && !over && (
+          <div className="absolute inset-0 z-[204] grid place-items-center bg-black/60" onClick={() => setConfirmGiveUp(false)}>
+            <div
+              className="flex flex-col items-center gap-4 px-9 py-7 text-center"
+              onClick={(e) => e.stopPropagation()}
+              style={{ background: "#0E1117", border: "4px solid #F87171", boxShadow: "6px 6px 0 #000, 0 0 28px rgba(248,113,113,.4)", animation: "slam .3s steps(4) both" }}
+            >
+              <div style={{ fontFamily: ARCADE, fontSize: 18, color: "#FFD0C8", textShadow: "3px 3px 0 #000" }}>항복하시겠습니까?</div>
+              <div className="flex gap-2.5">
+                <button type="button" onClick={giveUp} style={{ fontFamily: ARCADE, fontSize: 13, color: "#06121A", background: "#F87171", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 20px", cursor: "pointer" }}>항복</button>
+                <button type="button" onClick={() => setConfirmGiveUp(false)} style={{ fontFamily: ARCADE, fontSize: 13, color: "#C4C8D2", background: "#171B22", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 20px", cursor: "pointer" }}>취소</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {over && (
+          <div className="absolute inset-0 grid place-items-center bg-black/70" onClick={onClose}>
+            <div className="flex flex-col items-center gap-2.5" style={{ animation: "slam .5s steps(4) both" }}>
+              <div style={{ fontFamily: ARCADE, fontSize: 32, color: "#F87171", textShadow: "4px 4px 0 #000" }}>GAME OVER</div>
+              <div style={{ fontFamily: ARCADE, fontSize: 22, color: "#fff", textShadow: "3px 3px 0 #000" }}>{over.lines} LINES</div>
+              <button type="button" onClick={onClose} style={{ marginTop: 8, fontFamily: ARCADE, fontSize: 13, color: "#06121A", background: "#22D3EE", border: "3px solid #000", boxShadow: "3px 3px 0 #000", padding: "10px 18px", cursor: "pointer" }}>
+                EXIT
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

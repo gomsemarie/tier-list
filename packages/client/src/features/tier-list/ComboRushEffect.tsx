@@ -23,8 +23,9 @@ function arrowSvgUri(dir: string, color: string): string {
 /** Phaser scene: press the arrow sequence in time → win; run out → lose. */
 function comboScene(ss: number, p: { level: number; perStack: number; onResult: DuelResult }) {
   const lv = Math.max(0, Math.floor(p.level));
-  const N = Math.min(10, 3 + lv);
-  const T = Math.max(800, 2600 / Math.pow(1 + p.perStack, lv));
+  const half = p.perStack < 0.1; // 철벽 ½ 장착 → 난이도(개수) 상승률 절반
+  const N = 3 + (half ? Math.ceil(lv / 2) : lv); // 상한 없음 — 결국 불가능해져 끝남
+  const T = 4000; // 고정 시간 — 난이도는 방향키 개수(N)로만 조절
   const W = DUEL_VW * ss;
   const u = (n: number) => n * ss;
   const font = (n: number) => `${n * ss}px`;
@@ -49,17 +50,20 @@ function comboScene(ss: number, p: { level: number; perStack: number; onResult: 
       s.idx = 0;
       s.remaining = T;
       s.done = false;
+      s.clean = true; // 무실수 여부 — 한 번이라도 틀리면 false → 단순 반사
 
       const gap = Math.min(u(46), (W - u(48)) / N);
+      const arrowScale = Math.max(0.35, Math.min(1, gap / u(38))); // shrink to fit as N grows
       const startX = W / 2 - (gap * (N - 1)) / 2;
-      s.arrows = s.seq.map((d: string, i: number) => s.add.image(startX + i * gap, ARROW_Y, `arr_${d}_d`).setOrigin(0.5));
+      s.arrows = s.seq.map((d: string, i: number) => s.add.image(startX + i * gap, ARROW_Y, `arr_${d}_d`).setOrigin(0.5).setScale(arrowScale));
       s.drawArrows = () => {
         s.arrows.forEach((img: any, i: number) => {
           const c = i < s.idx ? "g" : i === s.idx ? "w" : "d";
           img.setTexture(`arr_${s.seq[i]}_${c}`);
-          img.setScale(i === s.idx ? 1.25 : 1);
+          img.setScale(i === s.idx ? arrowScale * 1.25 : arrowScale);
         });
       };
+      s.arrowScale = arrowScale;
       s.drawArrows();
 
       // Retro pixel burst (square shrapnel) — green on hit, red on miss.
@@ -87,14 +91,15 @@ function comboScene(ss: number, p: { level: number; perStack: number; onResult: 
           s.drawArrows();
           if (s.idx >= N) {
             s.done = true;
-            p.onResult("win", true);
+            p.onResult("win", s.clean); // 무실수=난이도 상승, 실수 후 완주=단순 반사
           }
         } else {
+          s.clean = false;
           const wrong = s.idx;
           s.arrows.forEach((img: any, i: number) => {
             if (i <= wrong) {
               img.setTexture(`arr_${s.seq[i]}_r`);
-              img.setScale(1);
+              img.setScale(s.arrowScale);
             }
           });
           s.burst(startX + wrong * gap, ARROW_Y, RED);

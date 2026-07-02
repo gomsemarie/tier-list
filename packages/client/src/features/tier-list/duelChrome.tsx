@@ -40,40 +40,49 @@ export function DuelTitle() {
 export function RetroBackdrop({ phase, items = [], seed = 0, calm = false }: { phase: "play" | "win" | "lose"; items?: AttackItem[]; seed?: number; calm?: boolean }) {
   const success = phase === "win";
   const peaceful = calm && phase === "play"; // solo practice: not under attack → no red strobe
-  const calmView = success || peaceful; // calm radial + gentle upward drift, no flash/shake
+  const calmView = success || peaceful; // calm radial + gentle upward drift
   const resolved = phase !== "play";
-  const vig = success ? "rgba(0,120,160,.85)" : "rgba(110,0,0,.85)";
 
   const floaters = useMemo(() => {
-    const src = items.length ? items.slice(0, 120) : Array.from({ length: 14 }, (_, i) => ({ src: null, name: `${i}`, weight: Math.random() }));
-    return src.map((it, i) => ({
-      key: i,
-      label: it.src ? "" : it.name.slice(0, 2), // image tiles need no initials
-      style: {
-        position: "absolute",
-        left: `${rand(0, 86)}%`,
-        top: calmView ? `${rand(60, 90)}%` : `${rand(0, 74)}%`,
-        width: 36 + it.weight * 26,
-        height: 36 + it.weight * 26,
-        background: it.src ? "#0E1117" : calmView ? (peaceful ? "hsl(232,55%,62%)" : "hsl(190,70%,55%)") : `hsl(${hueOf(it.name)},42%,46%)`,
-        backgroundImage: it.src ? `url("${it.src}")` : undefined,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        imageRendering: "pixelated",
-        border: "3px solid #000",
-        display: "grid",
-        placeItems: "center",
-        fontFamily: PIXEL,
-        fontSize: 11,
-        fontWeight: 700,
-        color: "#fff",
-        textShadow: "1px 1px 0 #000",
-        "--dx": `${rand(-75, 75)}px`,
-        "--dy": calmView ? `${-rand(120, 340)}px` : `${rand(-75, 75)}px`,
-        "--rot": "0deg",
-        animation: `floatY ${calmView ? 0.9 : rand(0.45, 0.9)}s steps(${calmView ? 5 : 4}) ${rand(0, 0.2)}s infinite alternate`,
-      } as CSSProperties,
-    }));
+    const src = items.length ? items.slice(0, 120) : Array.from({ length: 16 }, (_, i) => ({ src: null, name: `${i}`, weight: Math.random() }));
+    return src.map((it, i) => {
+      // Ring the edges only — leave the center clear so shrapnel never covers
+      // the arrows/marker. Each tile sits in the top/bottom/left/right band and
+      // only drifts a little, so it stays out of the play area.
+      const edge = i % 4;
+      const left = edge === 2 ? rand(0.5, 11) : edge === 3 ? rand(86, 97.5) : rand(1, 95);
+      const top = edge === 0 ? rand(1, 13) : edge === 1 ? rand(84, 96) : rand(2, 92);
+      const sz = 34 + it.weight * 24;
+      return {
+        key: i,
+        label: it.src ? "" : it.name.slice(0, 2), // image tiles need no initials
+        style: {
+          position: "absolute",
+          left: `${left}%`,
+          top: `${top}%`,
+          width: sz,
+          height: sz,
+          backgroundColor: it.src ? "#0E1117" : calmView ? (peaceful ? "hsl(232,55%,62%)" : "hsl(190,70%,55%)") : `hsl(${hueOf(it.name)},42%,46%)`,
+          backgroundImage: it.src ? `url("${it.src}")` : undefined,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          imageRendering: "pixelated",
+          border: "3px solid #000",
+          display: "grid",
+          placeItems: "center",
+          fontFamily: PIXEL,
+          fontSize: 11,
+          fontWeight: 700,
+          color: "#fff",
+          textShadow: "1px 1px 0 #000",
+          opacity: 0.9,
+          "--dx": `${rand(-22, 22)}px`,
+          "--dy": `${rand(-22, 22)}px`,
+          "--rot": "0deg",
+          animation: `floatY ${rand(0.8, 1.5)}s steps(4) ${rand(0, 0.3)}s infinite alternate`,
+        } as CSSProperties,
+      };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed, calmView, peaceful]);
 
@@ -102,21 +111,22 @@ export function RetroBackdrop({ phase, items = [], seed = 0, calm = false }: { p
 
   return (
     <>
-      <div className="pointer-events-none absolute -inset-12" style={{ animation: calmView ? undefined : "atkShake .22s linear infinite" }}>
-        {calmView ? (
-          <div
-            className="absolute inset-0"
-            style={{
-              background: peaceful
-                ? "radial-gradient(circle at 50% 42%, rgba(99,102,241,.20), rgba(8,11,20,.88) 70%)"
-                : "radial-gradient(circle at 50% 42%, rgba(34,211,238,.30), rgba(7,14,20,.78) 70%)",
-            }}
-          />
-        ) : (
+      <div className="pointer-events-none absolute -inset-12">
+        {peaceful ? (
+          // Playing: a calm retro-CRT screen — breathing indigo glow + scanlines.
           <>
-            <div className="absolute inset-0" style={{ background: "#FF281C", animation: "atkFlash .16s linear infinite" }} />
-            <div className="absolute inset-0" style={{ boxShadow: `inset 0 0 220px 60px ${vig}` }} />
+            <div
+              className="absolute inset-0"
+              style={{ background: "radial-gradient(circle at 50% 45%, rgba(99,102,241,.22), rgba(8,11,20,.92) 72%)", animation: "retroBreath 4.5s ease-in-out infinite" }}
+            />
+            <div className="absolute inset-0" style={{ backgroundImage: "linear-gradient(rgba(150,170,255,.05) 1px, transparent 1px)", backgroundSize: "100% 3px" }} />
           </>
+        ) : success ? (
+          // Win: calm cyan glow.
+          <div className="absolute inset-0" style={{ background: "radial-gradient(circle at 50% 42%, rgba(34,211,238,.30), rgba(7,14,20,.78) 70%)" }} />
+        ) : (
+          // Loss: a static muted vignette — never a red strobe.
+          <div className="absolute inset-0" style={{ background: "rgba(9,11,18,.55)", boxShadow: "inset 0 0 220px 70px rgba(70,26,34,.7)" }} />
         )}
       </div>
       <div className="pointer-events-none absolute inset-0">
@@ -130,6 +140,21 @@ export function RetroBackdrop({ phase, items = [], seed = 0, calm = false }: { p
         ))}
       </div>
     </>
+  );
+}
+
+/** After you parry in a real duel: a retro "waiting for the opponent" hold. */
+export function WaitScreen({ by }: { by: string }) {
+  return (
+    <div className="text-center select-none" style={{ animation: "slam .4s steps(4) both" }}>
+      <div style={{ fontFamily: ARCADE, fontSize: 40, color: "#FDE047", textShadow: "5px 5px 0 #000,0 0 20px rgba(253,224,71,.8)" }}>REFLECT!!</div>
+      <div style={{ marginTop: 12, fontFamily: PIXEL, fontSize: 16, fontWeight: 700, color: "#fff", textShadow: "2px 2px 0 #000" }}>{by}에게 받아쳤습니다!</div>
+      <div className="mt-4 flex items-center justify-center gap-2">
+        <span style={{ fontFamily: ARCADE, fontSize: 13, color: "#67E8F9", textShadow: "2px 2px 0 #000" }}>WAITING</span>
+        <span style={{ fontFamily: ARCADE, fontSize: 13, color: "#67E8F9", animation: "blink 1s steps(1) infinite" }}>...</span>
+      </div>
+      <div style={{ marginTop: 6, fontFamily: PIXEL, fontSize: 12, color: "#9AD8E8" }}>상대의 반사를 기다리는 중</div>
+    </div>
   );
 }
 

@@ -121,8 +121,10 @@ type DecisionState = {
   endsAt: number;
   durationMs: number;
   fromTier: string | null;
-  /** Parry mini-game chosen by the proposer for this whole match. */
+  /** Mini-game chosen by the proposer for this whole match. */
   duelMode: DuelGameMode;
+  /** Tetris match length (seconds) when duelMode === "tetris". */
+  duelSeconds: number;
   /** userId rosters; a user is in at most one bucket. */
   pro: { fighters: Set<string>; spectators: Set<string> };
   con: { fighters: Set<string>; spectators: Set<string> };
@@ -203,6 +205,21 @@ const parryLevel = new Map<string, number>();
 // (and the rally) stay on the same game until someone misses.
 const exchangeMode = new Map<string, DuelGameMode>();
 const pickDuelMode = (): DuelGameMode => (Math.random() < 0.5 ? "combo" : "timing");
+
+// Live 테트리스 대전 (simultaneous time-attack). Keyed `${roomId}:${userId}`
+// → the opponent's userId, so board/clear/dead events relay to the right player.
+const tetrisOpp = new Map<string, string>();
+// When a Tetris duel is one pairing of a 결정전 (decision match), maps each
+// fighter to its pair key so clear/dead events route through the decision engine
+// (buffs, elimination, revive) instead of the plain 1:1 win notice.
+const tetrisDuelPk = new Map<string, string>();
+const tkey = (roomId: string, userId: string) => `${roomId}:${userId}`;
+
+// Per-pair 1:1 연습 결투 buff charges, sourced from each fighter's *own*
+// combatBuff (목숨/방어) so a practice duel applies skills exactly like a
+// 결정전 pairing. Keyed `${roomId}:${pk}`. (공격 surge is applied once at start;
+// 강타/철벽 stay where they already work: attack:parry / client perStack.)
+const practiceBuff = new Map<string, { bulwark: Map<string, number>; life: Map<string, number> }>();
 
 // 티어 결정전 (decision match) timings.
 const DECISION_SIGNUP_MS = 10_000; // recruit window
@@ -842,6 +859,76 @@ function endVote(io: Server, room: Room) {
   }, REVOTE_HOLD_MS);
 }
 
+// --- 테트리스 대전 (simultaneous time-attack) --------------------------------
+
+/** Emit an event to every socket a given user has in the room. */
+function emitToUser(io: Server, room: Room, userId: string, ev: string, payload: unknown) {
+  for (const [sid, m] of room.members) if (m.userId === userId) io.to(sid).emit(ev, payload);
+}
+
+/** Kick off a Tetris duel between two players (both play at once). `seconds` is
+ *  the shared clock (1/3/5 min); clears drain the *opponent's* clock. When part
+ *  of a 결정전 (opts.pk set), each side may start with pre-stacked garbage
+ *  (opts.aGarbage/bGarbage — from 공격 surge + inherited debt). */
+function startTetrisDuel(
+  io: Server,
+  room: Room,
+  aId: string,
+  bId: string,
+  seconds: number,
+  opts?: { pk?: string; aGarbage?: number; bGarbage?: number; decision?: boolean; aLives?: number; bLives?: number },
+) {
+  tetrisOpp.set(tkey(room.id, aId), bId);
+  tetrisOpp.set(tkey(room.id, bId), aId);
+  if (opts?.pk) {
+    tetrisDuelPk.set(tkey(room.id, aId), opts.pk);
+    tetrisDuelPk.set(tkey(room.id, bId), opts.pk);
+  }
+  const a = memberInfo(room, aId);
+  const b = memberInfo(room, bId);
+  emitToUser(io, room, aId, "tetris:start", { by: b.name, seconds, garbage: opts?.aGarbage ?? 0, decision: !!opts?.decision, lives: opts?.aLives ?? 0 });
+  emitToUser(io, room, bId, "tetris:start", { by: a.name, seconds, garbage: opts?.bGarbage ?? 0, decision: !!opts?.decision, lives: opts?.bLives ?? 0 });
+  if (!opts?.decision) {
+    pushMessage(room, message("system", `🎮 테트리스 대전 시작 — ${a.name} vs ${b.name}`, "action"));
+    broadcast(io, room);
+  }
+}
+
+/** A member's equipped combat skill ("" if none). */
+function combatBuffOf(room: Room, userId: string): string {
+  return [...room.members.values()].find((m) => m.userId === userId)?.combatBuff ?? "";
+}
+/** 공격(surge) charge for a fighter: raises their opponent's start difficulty/garbage. */
+function surgeOf(room: Room, userId: string): number {
+  return combatBuffOf(room, userId) === "surge" ? 1 : 0;
+}
+/** Seed a 1:1 practice pair's consumable 방어/목숨 charges from each fighter's combatBuff. */
+function setupPracticeBuffs(room: Room, pk: string, aId: string, bId: string) {
+  const bulwark = new Map<string, number>();
+  const life = new Map<string, number>();
+  for (const id of [aId, bId]) {
+    if (combatBuffOf(room, id) === "bulwark") bulwark.set(id, 1);
+    if (combatBuffOf(room, id) === "life") life.set(id, 1);
+  }
+  practiceBuff.set(`${room.id}:${pk}`, { bulwark, life });
+}
+/** Extra Tetris lives (client-side revive) for a fighter: 목숨 → 1, else 0. */
+function tetrisLivesOf(room: Room, userId: string): number {
+  return combatBuffOf(room, userId) === "life" ? 1 : 0;
+}
+
+/** Clear both sides of a finished/aborted Tetris duel (incl. any decision link). */
+function endTetris(roomId: string, userId: string) {
+  const opp = tetrisOpp.get(tkey(roomId, userId));
+  tetrisOpp.delete(tkey(roomId, userId));
+  tetrisDuelPk.delete(tkey(roomId, userId));
+  if (opp) {
+    tetrisOpp.delete(tkey(roomId, opp));
+    tetrisDuelPk.delete(tkey(roomId, opp));
+    practiceBuff.delete(`${roomId}:${pairKey(userId, opp)}`);
+  }
+}
+
 // --- 티어 결정전 (decision match) -------------------------------------------
 
 /** Resolve a userId to a display participant (name/avatar/frame). */
@@ -996,6 +1083,17 @@ function broadcastDecision(io: Server, room: Room) {
 function clearDecision(room: Room) {
   if (room.decisionTimer) clearTimeout(room.decisionTimer);
   room.decisionTimer = null;
+  // Tear down any live decision-match Tetris pairings.
+  const d = room.decision;
+  if (d) {
+    const ids = new Set<string>([
+      ...d.pro.fighters,
+      ...d.con.fighters,
+      ...(d.duel?.proAlive ?? []),
+      ...(d.duel?.conAlive ?? []),
+    ]);
+    for (const id of ids) endTetris(room.id, id);
+  }
   room.decision = null;
 }
 
@@ -1014,6 +1112,7 @@ function proposeDecision(
   proposerId: string,
   proposerName: string,
   duelMode: DuelGameMode,
+  duelSeconds: number,
 ): string | null {
   if (room.decision) return "이미 진행 중인 결정전이 있어요.";
   const memberCount = new Set([...room.members.values()].map((m) => m.userId).filter(Boolean)).size;
@@ -1038,6 +1137,7 @@ function proposeDecision(
     durationMs: DECISION_SIGNUP_MS,
     fromTier: from,
     duelMode,
+    duelSeconds,
     pro: { fighters: new Set([proposerId]), spectators: new Set() },
     con: { fighters: new Set(), spectators: new Set() },
   };
@@ -1219,11 +1319,26 @@ function rematchDuel(io: Server, room: Room) {
     const proId = freePro.shift()!;
     const conId = freeCon.shift()!;
     const pk = pairKey(proId, conId);
-    parryLevel.set(`${room.id}:${pk}:${proId}`, startLevel("pro", proId));
-    parryLevel.set(`${room.id}:${pk}:${conId}`, startLevel("con", conId));
+    const proLevel = startLevel("pro", proId);
+    const conLevel = startLevel("con", conId);
     du.debt.delete(proId);
     du.debt.delete(conId);
     du.pairs.push({ proId, conId, pk });
+    if (d.duelMode === "tetris") {
+      // Tetris pairing: start difficulty maps to pre-stacked garbage lines
+      // (capped so it never top-outs on spawn). Both fighters play at once.
+      startTetrisDuel(io, room, proId, conId, d.duelSeconds || 60, {
+        pk,
+        aGarbage: Math.min(10, proLevel),
+        bGarbage: Math.min(10, conLevel),
+        decision: true,
+        aLives: du.reserveLives.get(proId) ?? 0, // 목숨 = client-side revive (uniform w/ 연습)
+        bLives: du.reserveLives.get(conId) ?? 0,
+      });
+      continue;
+    }
+    parryLevel.set(`${room.id}:${pk}:${proId}`, proLevel);
+    parryLevel.set(`${room.id}:${pk}:${conId}`, conLevel);
     const mode = d.duelMode; // the proposer's chosen game for this match
     exchangeMode.set(`${room.id}:${pk}`, mode);
     // Challenger (pro) opens; defender (con) gets the parry prompt.
@@ -1235,6 +1350,7 @@ function rematchDuel(io: Server, room: Room) {
           byUserId: proId,
           parryable: true,
           mode,
+          decision: true, // 결정전 — DecisionCard가 흐름을 관리하므로 대기 화면 없음
           level: parryLevel.get(`${room.id}:${pk}:${conId}`) ?? 0,
         });
     }
@@ -1252,6 +1368,13 @@ function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
   const [pair] = du.pairs.splice(pairIdx, 1);
   const loserSide: DecisionSide = pair.proId === loserId ? "pro" : "con";
   const winnerId = pair.proId === loserId ? pair.conId : pair.proId;
+  // Tetris pairing: close both boards (winner + loser) — a rematch/resolution
+  // re-mounts a fresh board via tetris:start when needed.
+  if (d.duelMode === "tetris") {
+    emitToUser(io, room, pair.proId, "tetris:done", {});
+    emitToUser(io, room, pair.conId, "tetris:done", {});
+    endTetris(room.id, loserId);
+  }
   const loserStack = parryLevel.get(`${room.id}:${pk}:${loserId}`) ?? 0;
   const winnerStack = parryLevel.get(`${room.id}:${pk}:${winnerId}`) ?? 0;
   parryLevel.delete(`${room.id}:${pk}:${pair.proId}`);
@@ -1265,7 +1388,9 @@ function onDuelHit(io: Server, room: Room, loserId: string, pk: string) {
   // 목숨: a reserve life lets the fallen fighter survive and re-enter the pool —
   // but only the exact fighter who equipped it (per-person, never a teammate or
   // the opponent). The revived fighter resumes at the same difficulty, not 0.
-  if ((du.reserveLives.get(loserId) ?? 0) > 0) {
+  // (Tetris handles 목숨 client-side — a top-out only reaches here once lives are
+  //  spent — so the server revive applies to the parry games only.)
+  if (d.duelMode !== "tetris" && (du.reserveLives.get(loserId) ?? 0) > 0) {
     du.reserveLives.set(loserId, (du.reserveLives.get(loserId) ?? 0) - 1);
     du.debt.set(loserId, loserStack);
     du.feed.push({ kind: "life", side: loserSide, name: memberInfo(room, loserId).name, amount: 0, ts: Date.now() });
@@ -1662,6 +1787,15 @@ io.on("connection", (socket: Socket) => {
       room.members.delete(socket.id);
       pushMessage(room, message("system", `${name} 님이 퇴장했습니다.`, "system"));
       if (room.members.size > 0) {
+        // Plain 1:1 Tetris duel: a leaving player forfeits — opponent wins. (A
+        // decision-match Tetris forfeit is handled by duelForfeit below.)
+        if (authedUser && !tetrisDuelPk.has(tkey(room.id, authedUser.id))) {
+          const opp = tetrisOpp.get(tkey(room.id, authedUser.id));
+          if (opp) {
+            emitToUser(io, room, opp, "tetris:win", { by: name });
+            endTetris(room.id, authedUser.id);
+          }
+        }
         // Decision match: a leaving champion forfeits the duel; a leaving signup
         // participant just drops out of the roster.
         const d = room.decision;
@@ -2012,6 +2146,13 @@ io.on("connection", (socket: Socket) => {
           du.feed.push({ kind: "gamble", side, name: attacker.name, amount: delta, ts: Date.now() });
         }
         if (du.feed.length > 8) du.feed.shift();
+      } else {
+        // 1:1 연습 결투 방어: the escalated-against fighter (aid) absorbs one rise.
+        const pb = practiceBuff.get(`${room.id}:${pk}`);
+        if (pb && delta > 0 && (pb.bulwark.get(aid) ?? 0) > 0) {
+          pb.bulwark.set(aid, (pb.bulwark.get(aid) ?? 0) - 1);
+          delta = 0;
+        }
       }
       // 철벽 ½ 방어 스킬은 받는 사람 본인 클라이언트에서 난이도 상승률을 10%→5%로
       // 낮춰 렌더링한다(AttackEffect의 perStack). 스택 수치(level) 자체는 그대로 둔다.
@@ -2019,6 +2160,7 @@ io.on("connection", (socket: Socket) => {
     }
     parryLevel.set(qKey, nextLevel);
     const relayMode = exchangeMode.get(`${room.id}:${pk}`) ?? "timing";
+    const isDecision = decisionDuelHasPair(room, pk);
     for (const [sid, m] of room.members) {
       if (m.userId === aid)
         io.to(sid).emit("room:attacked", {
@@ -2026,6 +2168,7 @@ io.on("connection", (socket: Socket) => {
           byUserId: authedUser.id,
           parryable: true, // the rally continues — they can parry back
           mode: relayMode,
+          decision: isDecision,
           level: nextLevel,
         });
     }
@@ -2063,17 +2206,114 @@ io.on("connection", (socket: Socket) => {
       return;
     }
     const winner = [...room.members.values()].find((m) => m.userId === aid);
+    // 1:1 연습 결투 목숨: a life charge revives the misser — resume at the same
+    // difficulty (re-emit the attack) instead of ending the rally.
+    const pb = practiceBuff.get(`${room.id}:${pk}`);
+    if (pb && (pb.life.get(authedUser.id) ?? 0) > 0) {
+      pb.life.set(authedUser.id, (pb.life.get(authedUser.id) ?? 0) - 1);
+      const myLevel = parryLevel.get(`${room.id}:${pk}:${authedUser.id}`) ?? 0;
+      const relayMode = exchangeMode.get(`${room.id}:${pk}`) ?? "timing";
+      for (const [sid, m] of room.members) {
+        if (m.userId === authedUser.id)
+          io.to(sid).emit("room:attacked", { by: winner?.name ?? "상대", byUserId: aid, parryable: true, mode: relayMode, level: myLevel });
+      }
+      broadcast(io, room);
+      return;
+    }
     const mid = room.rallies.get(pk);
     const existing = mid ? room.messages.find((m) => m.id === mid) : undefined;
     if (existing?.rally && !existing.rally.ended) {
       existing.rally = { ...existing.rally, ended: true, winner: winner?.name ?? "?" };
     }
+    // Tell the winner they won (the loser already saw their own miss).
+    for (const [sid, m] of room.members) {
+      if (m.userId === aid) io.to(sid).emit("room:duelWin", { by: name });
+    }
     room.rallies.delete(pk);
     exchangeMode.delete(`${room.id}:${pk}`);
+    practiceBuff.delete(`${room.id}:${pk}`);
     parryLevel.delete(`${room.id}:${pk}:${authedUser.id}`);
     parryLevel.delete(`${room.id}:${pk}:${aid}`);
     attackCooldownPair.delete(`${room.id}:${aid}:${authedUser.id}`); // let a rematch start at once
     broadcast(io, room);
+  });
+
+  // --- 테트리스 대전 relay: forward my events to my opponent's screen -----------
+  socket.on("tetris:clear", ({ lines, garbage }: { lines?: number; garbage?: number }) => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const opp = tetrisOpp.get(tkey(room.id, authedUser.id));
+    if (!opp) return;
+    const ln = Math.max(0, Number(lines) || 0);
+    let g = Math.max(0, Number(garbage) || 0);
+    // Decision-match Tetris: 도박 gambles the outgoing garbage, 방어 lets the
+    // opponent's side absorb a batch. (목숨 revive + 공격 start-garbage are handled
+    // at pairing/elimination time.)
+    const pk = tetrisDuelPk.get(tkey(room.id, authedUser.id));
+    const du = room.decision?.duel;
+    if (pk && du) {
+      const side: DecisionSide | null = du.proAlive.includes(authedUser.id)
+        ? "pro"
+        : du.conAlive.includes(authedUser.id)
+          ? "con"
+          : null;
+      if (side) {
+        const oppSide: DecisionSide = side === "pro" ? "con" : "pro";
+        if (g > 0 && du.buffs[side].gamble > 0) {
+          const before = g;
+          g = Math.random() < 0.5 ? g * (1 + du.buffs[side].gamble) : 0; // jackpot or bust
+          du.feed.push({ kind: "gamble", side, name: memberInfo(room, authedUser.id).name, amount: g - before, ts: Date.now() });
+          if (du.feed.length > 8) du.feed.shift();
+        }
+        if (g > 0 && du.bulwarkLeft[oppSide] > 0) {
+          du.bulwarkLeft[oppSide] -= 1;
+          du.feed.push({ kind: "absorb", side: oppSide, name: memberInfo(room, opp).name, amount: g, ts: Date.now() });
+          if (du.feed.length > 8) du.feed.shift();
+          g = 0; // garbage fully absorbed (the time drain still lands)
+        }
+        broadcastDecision(io, room);
+      }
+    } else {
+      // 1:1 연습 테트리스 방어: the receiving opponent absorbs one garbage batch.
+      const ppk = pairKey(authedUser.id, opp);
+      const pb = practiceBuff.get(`${room.id}:${ppk}`);
+      if (pb && g > 0 && (pb.bulwark.get(opp) ?? 0) > 0) {
+        pb.bulwark.set(opp, (pb.bulwark.get(opp) ?? 0) - 1);
+        g = 0; // garbage absorbed (time drain still lands)
+      }
+    }
+    emitToUser(io, room, opp, "tetris:oppClear", { lines: ln, garbage: g });
+  });
+
+  socket.on("tetris:board", ({ grid, seconds }: { grid?: number[][]; seconds?: number }) => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const opp = tetrisOpp.get(tkey(room.id, authedUser.id));
+    if (!opp) return;
+    emitToUser(io, room, opp, "tetris:oppBoard", { grid, seconds });
+  });
+
+  socket.on("tetris:dead", () => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    // Decision-match Tetris: a top-out/time-out/항복 is a duel loss → the bracket
+    // engine handles revive/elimination/rematch (and closes the boards).
+    const pk = tetrisDuelPk.get(tkey(room.id, authedUser.id));
+    if (pk && room.decision?.duel) {
+      onDuelHit(io, room, authedUser.id, pk);
+      return;
+    }
+    const opp = tetrisOpp.get(tkey(room.id, authedUser.id));
+    if (!opp) return;
+    const loser = memberInfo(room, authedUser.id);
+    const winner = memberInfo(room, opp);
+    emitToUser(io, room, opp, "tetris:win", { by: loser.name });
+    pushMessage(room, message("system", `🎮 테트리스 대전 종료 — ${winner.name} 승리`, "action"));
+    broadcast(io, room);
+    endTetris(room.id, authedUser.id);
   });
 
   socket.on(
@@ -2118,12 +2358,13 @@ io.on("connection", (socket: Socket) => {
   });
 
   // --- 티어 결정전 ---------------------------------------------------------
-  socket.on("decision:propose", ({ itemId, tierId, mode }: { itemId?: string; tierId?: string; mode?: string }) => {
+  socket.on("decision:propose", ({ itemId, tierId, mode, seconds }: { itemId?: string; tierId?: string; mode?: string; seconds?: number }) => {
     if (!currentRoom || !authedUser) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
-    const duelMode: DuelGameMode = mode === "combo" ? "combo" : "timing";
-    const err = proposeDecision(io, room, String(itemId ?? ""), String(tierId ?? ""), authedUser.id, name, duelMode);
+    const duelMode: DuelGameMode = mode === "combo" ? "combo" : mode === "tetris" ? "tetris" : "timing";
+    const dur = [60, 180, 300].includes(Number(seconds)) ? Number(seconds) : 60;
+    const err = proposeDecision(io, room, String(itemId ?? ""), String(tierId ?? ""), authedUser.id, name, duelMode, dur);
     if (err) hint(err);
   });
 
@@ -2354,16 +2595,12 @@ io.on("connection", (socket: Socket) => {
     const room = rooms.get(currentRoom);
     if (!room) return;
     const actorRole = memberRole(room, authedUser.id, authedUser.isAdmin);
-    const { action, targetUserId, seconds } = payload;
+    const { action, targetUserId, seconds, mode } = payload;
 
     // Attack: owner/admin OR anyone who unlocked the "attack" perk (a harmless
     // 3s visual gag), on anyone but themselves.
     if (action === "attack") {
-      const canAttack = actorRole !== "member" || authedUser.unlocked.includes("attack");
-      if (!canAttack) {
-        hint("연습 결투 권한이 없어요. 계정 관리에서 코드로 잠금 해제하세요.");
-        return;
-      }
+      // 연습 결투는 로그인한 모든 참가자가 신청할 수 있다 (권한 제한 없음).
       const tid = String(targetUserId ?? "");
       if (!tid || tid === authedUser.id) {
         hint("자기 자신과는 연습할 수 없어요.");
@@ -2385,20 +2622,35 @@ io.on("connection", (socket: Socket) => {
         return;
       }
       attackCooldownPair.set(cdKey, now);
-      // Fresh attack → reset both players' per-person difficulty for this rally.
       const pk = pairKey(authedUser.id, tid);
-      parryLevel.set(`${room.id}:${pk}:${authedUser.id}`, 0);
-      parryLevel.set(`${room.id}:${pk}:${tid}`, 0);
-      const mode = pickDuelMode();
-      exchangeMode.set(`${room.id}:${pk}`, mode);
+      // Challenger picked the game (falls back to random for older clients).
+      const duelMode: DuelGameMode = mode === "combo" ? "combo" : mode === "tetris" ? "tetris" : mode === "timing" ? "timing" : pickDuelMode();
+      // Seed this pair's 방어/목숨 charges from each fighter's own combatBuff so a
+      // 연습 결투 applies skills exactly like a 결정전 pairing.
+      setupPracticeBuffs(room, pk, authedUser.id, tid);
+      // Tetris is a simultaneous time-attack (1/3/5 min), not the parry relay.
+      if (duelMode === "tetris") {
+        const dur = [60, 180, 300].includes(Number(seconds)) ? Number(seconds) : 60;
+        startTetrisDuel(io, room, authedUser.id, tid, dur, {
+          aGarbage: surgeOf(room, tid), // 공격: 상대의 surge가 내 시작 가비지를 올린다
+          bGarbage: surgeOf(room, authedUser.id),
+          aLives: tetrisLivesOf(room, authedUser.id), // 목숨: client-side revive
+          bLives: tetrisLivesOf(room, tid),
+        });
+        return;
+      }
+      // Fresh attack → start difficulty = opponent's 공격(surge), else 0.
+      parryLevel.set(`${room.id}:${pk}:${authedUser.id}`, surgeOf(room, tid));
+      parryLevel.set(`${room.id}:${pk}:${tid}`, surgeOf(room, authedUser.id));
+      exchangeMode.set(`${room.id}:${pk}`, duelMode);
       for (const [sid, m] of room.members) {
         if (m.userId === tid)
           io.to(sid).emit("room:attacked", {
             by: name,
             byUserId: authedUser.id,
             parryable: true,
-            mode,
-            level: 0,
+            mode: duelMode,
+            level: parryLevel.get(`${room.id}:${pk}:${tid}`) ?? 0,
           });
       }
       // Start a fresh rally card for this pair (updates in place from here on).

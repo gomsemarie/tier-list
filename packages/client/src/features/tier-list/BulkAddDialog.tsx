@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ImageOff, Loader2, Plus, SkipForward } from "lucide-react";
+import { ArrowLeft, Ban, ImageOff, Loader2, Plus, SkipForward } from "lucide-react";
 
 import type { Item } from "@tier-list/shared";
 import { type ImageCandidate } from "@/lib/imageSearch";
@@ -14,11 +14,40 @@ type BulkAddDialogProps = {
   onClose: () => void;
 };
 
-/** Paste names → optionally search/verify/pick an image for each → add them all. */
+type Entry = { name: string; kind: "ok" | "warn" | "block"; match?: Item; score: number };
+
+function swatch(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return `hsl(${((h % 360) + 360) % 360},40%,46%)`;
+}
+
+/** Small preview of an existing item a new name resembles. */
+function MatchTile({ item, score }: { item: Item; score: number }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <div className="size-9 shrink-0 overflow-hidden rounded-[4px] border border-[#2A303C]">
+        {item.imageUrl ? (
+          <img src={item.imageUrl} alt="" className="size-full object-cover" />
+        ) : (
+          <div className="grid size-full place-items-center text-[11px] font-extrabold text-white" style={{ background: swatch(item.name) }}>
+            {item.name.slice(0, 2)}
+          </div>
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-[12px] font-bold text-[#EDEAE2]">{item.name}</div>
+        <div className="text-[10px] text-[#8A8F9C]">유사도 {Math.round(score * 100)}%</div>
+      </div>
+    </div>
+  );
+}
+
+/** Paste names → resolve duplicates → optionally pick images → add them all. */
 export function BulkAddDialog({ existing, onSubmit, onClose }: BulkAddDialogProps) {
   const qc = useQueryClient();
   const [text, setText] = useState("");
-  const [step, setStep] = useState<"names" | "images">("names");
+  const [step, setStep] = useState<"names" | "review" | "images">("names");
   const textRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -30,7 +59,12 @@ export function BulkAddDialog({ existing, onSubmit, onClose }: BulkAddDialogProp
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // --- per-item image step (iterates the screened `queue`, not raw `names`) ---
+  // --- duplicate review ---
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [nextMode, setNextMode] = useState<"noimg" | "images">("images");
+
+  // --- per-item image step (iterates the accepted `queue`) ---
   const [idx, setIdx] = useState(0);
   const [queue, setQueue] = useState<string[]>([]);
   const picks = useRef<(string | null)[]>([]);
@@ -50,42 +84,44 @@ export function BulkAddDialog({ existing, onSubmit, onClose }: BulkAddDialogProp
     }
   }, [qc]);
 
-  /** Drop duplicate names (block) and confirm similar ones (warn), comparing
-   *  against existing items AND names already accepted in this batch. Returns
-   *  the names cleared to add, or null if the user canceled at the warning. */
-  const screen = (list: string[]): string[] | null => {
+  /** Classify each (unique) name against existing items + earlier batch names. */
+  const analyze = (): Entry[] => {
     const pool: Item[] = [...existing];
-    const accepted: string[] = [];
-    const blocked: string[] = [];
-    const warned: string[] = [];
-    for (const name of list) {
+    const out: Entry[] = [];
+    for (const name of [...new Set(names)]) {
       const v = checkDuplicate(name, pool);
-      if (v.kind === "block") {
-        blocked.push(`${name} ≈ ${v.match.name}`);
-        continue;
-      }
-      if (v.kind === "warn") warned.push(`${name} ≈ ${v.match.name}`);
-      accepted.push(name);
-      pool.push({ id: `__new__${name}`, name } as Item); // catch in-batch dupes too
+      out.push({ name, kind: v.kind, match: v.kind === "ok" ? undefined : v.match, score: v.kind === "ok" ? 0 : v.score });
+      if (v.kind !== "block") pool.push({ id: `__new__${name}`, name } as Item); // catch in-batch dupes
     }
-    if (blocked.length) {
-      window.alert(`이미 같거나 매우 비슷한 항목이 있어 제외했어요:\n\n${blocked.join("\n")}`);
-    }
-    if (warned.length && !window.confirm(`비슷한 항목이 있어요. 그래도 추가할까요?\n\n${warned.join("\n")}`)) {
-      return null;
-    }
-    return accepted;
+    return out;
   };
 
-  const goImages = () => {
-    const q = screen(names);
-    if (!q || q.length === 0) return;
-    setQueue(q);
-    picks.current = q.map(() => null);
+  const proceed = (accepted: string[], mode: "noimg" | "images") => {
+    if (accepted.length === 0) return;
+    if (mode === "noimg") {
+      onSubmit(accepted.map((name) => ({ name, imageUrl: null })));
+      return;
+    }
+    setQueue(accepted);
+    picks.current = accepted.map(() => null);
     setIdx(0);
     setStep("images");
-    void search(q[0]);
+    void search(accepted[0]);
   };
+
+  const start = (mode: "noimg" | "images") => {
+    const es = analyze();
+    if (es.some((e) => e.kind !== "ok")) {
+      setEntries(es);
+      setExcluded(new Set(es.filter((e) => e.kind === "block").map((e) => e.name))); // blocked start excluded
+      setNextMode(mode);
+      setStep("review");
+    } else {
+      proceed(es.map((e) => e.name), mode);
+    }
+  };
+
+  const accepted = entries.filter((e) => e.kind === "ok" || (e.kind === "warn" && !excluded.has(e.name)));
 
   const goto = (next: number) => {
     setIdx(next);
@@ -145,10 +181,7 @@ export function BulkAddDialog({ existing, onSubmit, onClose }: BulkAddDialogProp
               <button
                 type="button"
                 disabled={names.length === 0}
-                onClick={() => {
-                  const q = screen(names);
-                  if (q && q.length) onSubmit(q.map((name) => ({ name, imageUrl: null })));
-                }}
+                onClick={() => start("noimg")}
                 className="h-10 flex-1 rounded-[6px] border border-[#2A303C] bg-[#171B22] text-[13px] font-semibold text-[#C4C8D2] disabled:opacity-40"
               >
                 이미지 없이 추가
@@ -156,10 +189,74 @@ export function BulkAddDialog({ existing, onSubmit, onClose }: BulkAddDialogProp
               <button
                 type="button"
                 disabled={names.length === 0}
-                onClick={goImages}
+                onClick={() => start("images")}
                 className="h-10 flex-[1.4] rounded-[6px] bg-[#6366F1] text-[13px] font-bold text-white disabled:opacity-40"
               >
                 이미지 선택하며 추가 →
+              </button>
+            </div>
+          </>
+        ) : step === "review" ? (
+          <>
+            <div className="mb-1 text-[16px] font-extrabold text-[#EDEAE2]">중복 확인</div>
+            <div className="mb-3 text-[12px] text-[#8A8F9C]">겹치거나 비슷한 이름이 있어요. 추가할 항목을 정하세요.</div>
+
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+              {entries
+                .filter((e) => e.kind !== "ok" && e.match)
+                .map((e) => {
+                  const blocked = e.kind === "block";
+                  const on = !blocked && !excluded.has(e.name);
+                  return (
+                    <div
+                      key={e.name}
+                      className="flex items-center gap-2 rounded-[8px] border px-2.5 py-2"
+                      style={blocked ? { borderColor: "rgba(248,113,113,.4)", background: "rgba(248,113,113,.06)" } : { borderColor: "rgba(245,158,11,.4)", background: "rgba(245,158,11,.06)" }}
+                    >
+                      <div className="w-[86px] shrink-0 truncate text-[13px] font-bold text-white">{e.name}</div>
+                      <span className="shrink-0 text-[12px] text-[#6A707E]">≈</span>
+                      <div className="min-w-0 flex-1">{e.match && <MatchTile item={e.match} score={e.score} />}</div>
+                      {blocked ? (
+                        <span className="flex shrink-0 items-center gap-1 text-[11px] font-bold text-[#F87171]">
+                          <Ban className="size-3.5" /> 중복
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExcluded((s) => {
+                              const n = new Set(s);
+                              if (n.has(e.name)) n.delete(e.name);
+                              else n.add(e.name);
+                              return n;
+                            })
+                          }
+                          className="shrink-0 rounded-[5px] border px-2.5 py-1 text-[11px] font-bold"
+                          style={on ? { borderColor: "#6366F1", background: "#6366F1", color: "#fff" } : { borderColor: "#2A303C", background: "#0E1117", color: "#8A8F9C" }}
+                        >
+                          {on ? "추가함" : "제외됨"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setStep("names")}
+                className="h-10 rounded-[6px] border border-[#2A303C] bg-[#171B22] px-4 text-[13px] font-semibold text-[#C4C8D2]"
+              >
+                뒤로
+              </button>
+              <button
+                type="button"
+                disabled={accepted.length === 0}
+                onClick={() => proceed(accepted.map((e) => e.name), nextMode)}
+                className="h-10 flex-1 rounded-[6px] bg-[#6366F1] text-[13px] font-bold text-white disabled:opacity-40"
+              >
+                {accepted.length}개 추가 계속
               </button>
             </div>
           </>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageSquareOff, Ban, ListX, ShieldCheck, Swords, UserX, Lock, Zap } from "lucide-react";
+import { Blocks, Gamepad2, MessageSquareOff, Ban, ListX, ShieldCheck, Swords, Target, UserX, Lock, Zap } from "lucide-react";
 
-import type { ModerateActionType, Member } from "@tier-list/shared";
+import type { DuelGameMode, ModerateActionType, Member } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
 
 const DURATIONS = [
@@ -21,7 +21,7 @@ type MemberOverlayProps = {
   canAttack: boolean;
   /** Epoch ms when the actor's attack cooldown ends (0 = ready). */
   attackReadyAt?: number;
-  onModerate: (action: ModerateActionType, seconds?: number) => void;
+  onModerate: (action: ModerateActionType, seconds?: number, mode?: DuelGameMode) => void;
   onGrantAdmin: (makeAdmin: boolean) => void;
   onClose: () => void;
 };
@@ -52,6 +52,11 @@ export function MemberOverlay({
   }, [attackReadyAt]);
   const cdLeft = Math.max(0, Math.ceil((attackReadyAt - Date.now()) / 1000));
 
+  // Chosen practice game + (tetris only) match length.
+  const [duelGame, setDuelGame] = useState<DuelGameMode>("timing");
+  const [tetrisSeconds, setTetrisSeconds] = useState(60);
+  const fireAttack = () => onModerate("attack", duelGame === "tetris" ? tetrisSeconds : undefined, duelGame);
+
   // Auto-attack: fire whenever the cooldown is up (while the overlay is open).
   const [auto, setAuto] = useState(false);
   const lastFire = useRef(0);
@@ -62,11 +67,59 @@ export function MemberOverlay({
       const t = Date.now();
       if (t >= attackReadyAt && t - lastFire.current >= 4500) {
         lastFire.current = t;
-        onModerate("attack");
+        onModerate("attack", duelGame === "tetris" ? tetrisSeconds : undefined, duelGame);
       }
     }, 300);
     return () => clearInterval(id);
-  }, [auto, canModerate, isSelf, attackReadyAt, onModerate]);
+  }, [auto, canModerate, isSelf, attackReadyAt, duelGame, tetrisSeconds, onModerate]);
+
+  // 타이밍 / 콤보 selector shared by both attack UIs.
+  const gameToggle = (
+    <div className="mb-2 flex gap-1.5">
+      {([
+        { id: "timing", name: "타이밍", Icon: Target },
+        { id: "combo", name: "콤보", Icon: Gamepad2 },
+        { id: "tetris", name: "테트리스", Icon: Blocks },
+      ] as const).map((g) => {
+        const on = duelGame === g.id;
+        return (
+          <button
+            key={g.id}
+            type="button"
+            onClick={() => setDuelGame(g.id)}
+            className="font-pixel flex h-8 flex-1 items-center justify-center gap-1 rounded-[2px] text-[12px] font-bold"
+            style={{ border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: on ? "#22D3EE" : "#171B22", color: on ? "#06121A" : "#8A8F9C" }}
+          >
+            <g.Icon className="size-3.5" /> {g.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  // Tetris match length (1/3/5분) — only relevant for the tetris game.
+  const tetrisDurations = duelGame === "tetris" && (
+    <div className="mb-2 flex gap-1.5">
+      {([
+        { s: 60, name: "1분" },
+        { s: 180, name: "3분" },
+        { s: 300, name: "5분" },
+      ] as const).map((d) => {
+        const on = tetrisSeconds === d.s;
+        return (
+          <button
+            key={d.s}
+            type="button"
+            onClick={() => setTetrisSeconds(d.s)}
+            className="font-pixel h-7 flex-1 rounded-[2px] text-[11px] font-bold"
+            style={{ border: "2px solid #000", boxShadow: "2px 2px 0 #000", background: on ? "#FDE047" : "#171B22", color: on ? "#06121A" : "#8A8F9C" }}
+          >
+            {d.name}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   const now = Date.now();
   const muted = (member.mutedUntil ?? 0) > now;
@@ -135,6 +188,8 @@ export function MemberOverlay({
                 onClear={() => onModerate("banDuel", 0)}
                 onPick={(s) => onModerate("banDuel", s)}
               />
+              {canAttack && gameToggle}
+              {canAttack && tetrisDurations}
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -147,7 +202,7 @@ export function MemberOverlay({
                   <button
                     type="button"
                     disabled={cdLeft > 0}
-                    onClick={() => onModerate("attack")}
+                    onClick={fireAttack}
                     className="font-pixel flex h-[38px] flex-1 items-center justify-center gap-1.5 rounded-[2px] text-[13px] font-bold text-white"
                     style={
                       cdLeft > 0
@@ -189,10 +244,12 @@ export function MemberOverlay({
           </div>
         ) : showAttackOnly ? (
           <div className="border-t border-[#232934] pt-3.5">
+            {gameToggle}
+            {tetrisDurations}
             <button
               type="button"
               disabled={cdLeft > 0}
-              onClick={() => onModerate("attack")}
+              onClick={fireAttack}
               className="font-pixel flex h-[38px] w-full items-center justify-center gap-1.5 rounded-[2px] text-[13px] font-bold text-white"
               style={
                 cdLeft > 0

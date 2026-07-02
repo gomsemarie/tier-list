@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { io, type Socket } from "socket.io-client";
 
 import type { TierListController } from "./controller";
@@ -71,7 +71,7 @@ export type RoomConnection = {
   activeVote: VoteSnapshot | null;
   /** In-progress tier decision match (signup → duel → result), or null. */
   activeDecision: DecisionSnapshot | null;
-  proposeDecision: (itemId: string, tierId: string, mode: DuelGameMode) => void;
+  proposeDecision: (itemId: string, tierId: string, mode: DuelGameMode, seconds?: number) => void;
   joinDecision: (side: DecisionSide, role: DecisionRole) => void;
   leaveDecision: () => void;
   /** Owner/admin pins a placed item to its tier for `seconds`. */
@@ -79,8 +79,28 @@ export type RoomConnection = {
   /** Owner/admin lifts a tier lock early. */
   unlockTier: (itemId: string) => void;
   /** Set briefly when this client is attacked by an admin (drives the hit effect). */
-  attack: { by: string; byUserId?: string; parryable: boolean; level?: number; mode?: DuelGameMode; at: number } | null;
+  attack: { by: string; byUserId?: string; parryable: boolean; level?: number; mode?: DuelGameMode; decision?: boolean; at: number } | null;
   clearAttack: () => void;
+  /** Set when you win a practice duel (the opponent missed). */
+  duelWin: { by: string; at: number } | null;
+  clearDuelWin: () => void;
+  /** Live 테트리스 대전: set when a Tetris duel starts (opponent name + clock).
+   *  `decision` = it's one pairing of a 결정전; `startGarbage` = pre-stacked rows;
+   *  `lives` = client-side 목숨 revives on top-out. */
+  tetris: { by: string; seconds: number; at: number; decision?: boolean; startGarbage?: number; lives?: number } | null;
+  /** Opponent's latest board snapshot (mutable ref — polled by the Phaser scene). */
+  tetrisOppRef: MutableRefObject<{ grid: number[][]; seconds: number } | null>;
+  /** Seconds to apply to my Tetris clock from the opponent's clears (negative). */
+  tetrisDeltaRef: MutableRefObject<number>;
+  /** Garbage lines queued on me from the opponent's clears (Tetrio-style). */
+  tetrisGarbageRef: MutableRefObject<number>;
+  /** Set when I win the Tetris duel (opponent topped out / left / ran out). */
+  tetrisWin: { by: string; at: number } | null;
+  clearTetris: () => void;
+  clearTetrisWin: () => void;
+  tetrisClear: (lines: number, garbage: number) => void;
+  tetrisBoard: (grid: number[][], seconds: number) => void;
+  tetrisDead: () => void;
   /** The attacked user reflects the attack back to its sender. */
   parryAttack: (attackerId: string, escalate: boolean) => void;
   /** Report that this player got hit (parry missed) — finalizes the rally. */
@@ -121,6 +141,7 @@ export type RoomConnection = {
     action: ModerateActionType,
     targetUserId?: string,
     seconds?: number,
+    mode?: DuelGameMode,
   ) => void;
   grantAdmin: (targetUserId: string, makeAdmin: boolean) => void;
   clearError: () => void;
@@ -173,8 +194,14 @@ export function useRoom(): RoomConnection {
   const [activeVote, setActiveVote] = useState<VoteSnapshot | null>(null);
   const [activeDecision, setActiveDecision] = useState<DecisionSnapshot | null>(null);
   const [attack, setAttack] = useState<
-    { by: string; byUserId?: string; parryable: boolean; level?: number; mode?: DuelGameMode; at: number } | null
+    { by: string; byUserId?: string; parryable: boolean; level?: number; mode?: DuelGameMode; decision?: boolean; at: number } | null
   >(null);
+  const [duelWin, setDuelWin] = useState<{ by: string; at: number } | null>(null);
+  const [tetris, setTetris] = useState<{ by: string; seconds: number; at: number; decision?: boolean; startGarbage?: number; lives?: number } | null>(null);
+  const [tetrisWin, setTetrisWin] = useState<{ by: string; at: number } | null>(null);
+  const tetrisOppRef = useRef<{ grid: number[][]; seconds: number } | null>(null);
+  const tetrisDeltaRef = useRef(0);
+  const tetrisGarbageRef = useRef(0);
   const [moderation, setModeration] = useState<
     (ModerationEffect & { at: number }) | null
   >(null);
@@ -266,7 +293,7 @@ export function useRoom(): RoomConnection {
       (
         payload:
           | string
-          | { by?: string; byUserId?: string; parryable?: boolean; level?: number; mode?: DuelGameMode },
+          | { by?: string; byUserId?: string; parryable?: boolean; level?: number; mode?: DuelGameMode; decision?: boolean },
       ) => {
         if (typeof payload === "string") {
           setAttack({ by: payload || "누군가", parryable: false, at: Date.now() });
@@ -277,11 +304,47 @@ export function useRoom(): RoomConnection {
             parryable: !!payload?.parryable,
             level: payload?.level ?? 0,
             mode: payload?.mode,
+            decision: !!payload?.decision,
             at: Date.now(),
           });
         }
       },
     );
+    socket.on("room:duelWin", (p: { by?: string }) => {
+      setDuelWin({ by: String(p?.by || "상대"), at: Date.now() });
+    });
+    // --- 테트리스 대전 ---------------------------------------------------------
+    socket.on("tetris:start", (p: { by?: string; seconds?: number; decision?: boolean; garbage?: number; lives?: number }) => {
+      tetrisOppRef.current = null;
+      tetrisDeltaRef.current = 0;
+      tetrisGarbageRef.current = 0;
+      setTetrisWin(null);
+      setTetris({
+        by: String(p?.by || "상대"),
+        seconds: Number(p?.seconds) || 60,
+        at: Date.now(),
+        decision: !!p?.decision,
+        startGarbage: Math.max(0, Number(p?.garbage) || 0),
+        lives: Math.max(0, Number(p?.lives) || 0),
+      });
+    });
+    // Decision-match pairing ended (won a round, or eliminated) → close the board.
+    socket.on("tetris:done", () => {
+      setTetris(null);
+    });
+    socket.on("tetris:oppClear", (p: { lines?: number; garbage?: number }) => {
+      // Opponent cleared N lines → drain 2×N seconds from my clock and stack their
+      // net garbage on my board.
+      tetrisDeltaRef.current -= 2 * (Number(p?.lines) || 0);
+      tetrisGarbageRef.current += Math.max(0, Number(p?.garbage) || 0);
+    });
+    socket.on("tetris:oppBoard", (p: { grid?: number[][]; seconds?: number }) => {
+      if (Array.isArray(p?.grid)) tetrisOppRef.current = { grid: p.grid, seconds: Number(p?.seconds) || 0 };
+    });
+    socket.on("tetris:win", (p: { by?: string }) => {
+      setTetris(null);
+      setTetrisWin({ by: String(p?.by || "상대"), at: Date.now() });
+    });
     socket.on("room:moderation", (e: ModerationEffect) => {
       setModeration({ ...e, at: Date.now() });
     });
@@ -480,6 +543,18 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const clearAttack = useCallback(() => setAttack(null), []);
+  const clearDuelWin = useCallback(() => setDuelWin(null), []);
+  const clearTetris = useCallback(() => setTetris(null), []);
+  const clearTetrisWin = useCallback(() => setTetrisWin(null), []);
+  const tetrisClear = useCallback((lines: number, garbage: number) => {
+    socketRef.current?.emit("tetris:clear", { lines, garbage });
+  }, []);
+  const tetrisBoard = useCallback((grid: number[][], seconds: number) => {
+    socketRef.current?.emit("tetris:board", { grid, seconds });
+  }, []);
+  const tetrisDead = useCallback(() => {
+    socketRef.current?.emit("tetris:dead");
+  }, []);
   const parryAttack = useCallback((attackerId: string, escalate: boolean) => {
     socketRef.current?.emit("attack:parry", { attackerId, escalate });
   }, []);
@@ -499,8 +574,8 @@ export function useRoom(): RoomConnection {
     socketRef.current?.emit("vote:cast", { tierId });
   }, []);
 
-  const proposeDecision = useCallback((itemId: string, tierId: string, mode: DuelGameMode) => {
-    socketRef.current?.emit("decision:propose", { itemId, tierId, mode });
+  const proposeDecision = useCallback((itemId: string, tierId: string, mode: DuelGameMode, seconds?: number) => {
+    socketRef.current?.emit("decision:propose", { itemId, tierId, mode, seconds });
   }, []);
   const joinDecision = useCallback((side: DecisionSide, role: DecisionRole) => {
     socketRef.current?.emit("decision:join", { side, role });
@@ -516,8 +591,8 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const moderate = useCallback(
-    (action: ModerateActionType, targetUserId?: string, seconds?: number) => {
-      socketRef.current?.emit("room:moderate", { action, targetUserId, seconds });
+    (action: ModerateActionType, targetUserId?: string, seconds?: number, mode?: DuelGameMode) => {
+      socketRef.current?.emit("room:moderate", { action, targetUserId, seconds, mode });
     },
     [],
   );
@@ -560,6 +635,18 @@ export function useRoom(): RoomConnection {
     unlockTier,
     attack,
     clearAttack,
+    duelWin,
+    clearDuelWin,
+    tetris,
+    tetrisOppRef,
+    tetrisDeltaRef,
+    tetrisGarbageRef,
+    tetrisWin,
+    clearTetris,
+    clearTetrisWin,
+    tetrisClear,
+    tetrisBoard,
+    tetrisDead,
     parryAttack,
     rallyHit,
     moderation,

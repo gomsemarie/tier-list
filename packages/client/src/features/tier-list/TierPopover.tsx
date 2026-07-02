@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Gamepad2, Landmark, Link2, Lock, Pencil, Plus, ShoppingCart, Swords, Target, Trash2, Unlock, X } from "lucide-react";
+import { Blocks, Gamepad2, Landmark, Link2, Lock, Pencil, Plus, ShoppingCart, Swords, Target, Trash2, Unlock, X } from "lucide-react";
 
 import type { ChangeEntry, DuelGameMode, Item, Member, Tier } from "@tier-list/shared";
 import { useOg } from "@/lib/queries";
@@ -96,7 +96,7 @@ type TierPopoverProps = {
   onPool: () => void;
   onStartVote?: () => void;
   /** Open a tier decision match to move the item into `tierId` (room only). */
-  onProposeDecision?: (tierId: string, mode: DuelGameMode) => void;
+  onProposeDecision?: (tierId: string, mode: DuelGameMode, seconds?: number) => void;
   /** Room has Coupang shortcut enabled → show a top-left Coupang search button. */
   coupang?: boolean;
   /** Active tier lock on this item — shows a 🔒 banner. */
@@ -139,6 +139,7 @@ export function TierPopover({
   const [duelOpen, setDuelOpen] = useState(false);
   const [duelTier, setDuelTier] = useState<string | null>(null);
   const [duelGame, setDuelGame] = useState<DuelGameMode>("timing");
+  const [duelSeconds, setDuelSeconds] = useState(60);
   const [lockMenu, setLockMenu] = useState(false);
   const links = item.links ?? [];
 
@@ -437,10 +438,11 @@ export function TierPopover({
             </div>
 
             <label className="mb-1.5 block text-[11px] font-bold tracking-wide text-[#8A8F9C]">게임 종류</label>
-            <div className="mb-5 flex gap-2">
+            <div className="mb-3 flex gap-2">
               {([
                 { id: "timing", name: "타이밍", desc: "정밀 타이밍 바", Icon: Target },
                 { id: "combo", name: "콤보 러시", desc: "방향키 콤보", Icon: Gamepad2 },
+                { id: "tetris", name: "테트리스", desc: "동시 시간전", Icon: Blocks },
               ] as const).map((g) => {
                 const on = duelGame === g.id;
                 return (
@@ -463,6 +465,36 @@ export function TierPopover({
               })}
             </div>
 
+            {duelGame === "tetris" && (
+              <>
+                <label className="mb-1.5 block text-[11px] font-bold tracking-wide text-[#8A8F9C]">경기 시간</label>
+                <div className="mb-5 flex gap-2">
+                  {([
+                    { s: 60, name: "1분" },
+                    { s: 180, name: "3분" },
+                    { s: 300, name: "5분" },
+                  ] as const).map((d) => {
+                    const on = duelSeconds === d.s;
+                    return (
+                      <button
+                        key={d.s}
+                        type="button"
+                        onClick={() => setDuelSeconds(d.s)}
+                        className="flex-1 rounded-[8px] border px-2 py-2 text-[12px] font-bold"
+                        style={
+                          on
+                            ? { borderColor: "#6366F1", background: "rgba(99,102,241,.14)", color: "#A5B4FC" }
+                            : { borderColor: "#2A303C", background: "#0E1117", color: "#8A8F9C" }
+                        }
+                      >
+                        {d.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
             <div className="flex gap-2">
               <button
                 type="button"
@@ -474,7 +506,7 @@ export function TierPopover({
               <button
                 type="button"
                 disabled={!duelTier}
-                onClick={() => duelTier && onProposeDecision(duelTier, duelGame)}
+                onClick={() => duelTier && onProposeDecision(duelTier, duelGame, duelGame === "tetris" ? duelSeconds : undefined)}
                 className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-[#6366F1] text-[13px] font-bold text-white disabled:opacity-40"
               >
                 <Swords className="size-4" /> 결정전 신청

@@ -2,7 +2,7 @@ import type { TierListState } from "./types";
 
 /** Which parry mini-game resolves an attack exchange: the classic timing bar,
  *  or the Phaser arrow-combo rush. Chosen server-side per pair. */
-export type DuelGameMode = "timing" | "combo";
+export type DuelGameMode = "timing" | "combo" | "tetris";
 
 export type ChatKind = "user" | "system" | "action" | "announce" | "super";
 
@@ -79,6 +79,8 @@ export type ModeratePayload = {
   action: ModerateActionType;
   targetUserId?: string;
   seconds?: number;
+  /** For "attack": which parry mini-game the challenger picked. */
+  mode?: DuelGameMode;
 };
 
 /** A recent tier change for the live "변경 이력" panel (in-memory, not persisted). */

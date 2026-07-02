@@ -83,9 +83,28 @@ function FighterSlot({ p, side }: { p?: DuelParticipant; side: DecisionSide }) {
   );
 }
 
-/** Matchup preview: 찬성 fighters paired against 반대 fighters by seat order. */
-function Bracket({ pro, con }: { pro: DuelParticipant[]; con: DuelParticipant[] }) {
+/** Matchup preview. Parry games pair 찬성 vs 반대 by seat; Tetris is a free-for-all
+ *  arena so it just lists each team's roster (unequal counts are fine). */
+function Bracket({ pro, con, mode }: { pro: DuelParticipant[]; con: DuelParticipant[]; mode: string }) {
   const rows = Math.max(pro.length, con.length);
+  if (mode === "tetris") {
+    return (
+      <div className="mt-3 rounded-[9px] bg-[#0E1117] p-3">
+        <div className="mb-2.5 text-center text-[10px] font-bold tracking-wide text-[#6A707E]">
+          {pro.length} vs {con.length} · 다대다 자유 대전
+        </div>
+        {pro.length === 0 && con.length === 0 ? (
+          <div className="py-2 text-center text-[11px] text-[#6A707E]">결투에 참가하면 참가자가 표시됩니다</div>
+        ) : (
+          <div className="flex items-start justify-center gap-3">
+            <div className="flex flex-col gap-1.5">{pro.map((p) => <FighterSlot key={p.userId} p={p} side="pro" />)}</div>
+            <span className="font-arcade self-center text-[12px] font-bold text-[#6A707E]">VS</span>
+            <div className="flex flex-col gap-1.5">{con.map((p) => <FighterSlot key={p.userId} p={p} side="con" />)}</div>
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="mt-3 rounded-[9px] bg-[#0E1117] p-3">
       <div className="mb-2.5 text-center text-[10px] font-bold tracking-wide text-[#6A707E]">대진표</div>
@@ -236,9 +255,15 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
               <div className="mb-3 flex gap-2 rounded-[8px] bg-[#0E1117] px-3 py-2.5 text-[11px] leading-relaxed text-[#9AA0AD]">
                 <Info className="mt-px size-3.5 shrink-0 text-[#818CF8]" />
                 <span>
-                  실력(패링 결투)으로 티어를 정합니다. <b className="text-[#86EFAC]">찬성</b> 승리 →{" "}
+                  {d.mode === "tetris" ? "테트리스 다대다 대전" : "실력(패링 결투)"}으로 티어를 정합니다. <b className="text-[#86EFAC]">찬성</b> 승리 →{" "}
                   <b className="text-white">{d.targetTier.label} 티어로 1시간 고정</b>, <b className="text-[#FCA5A5]">반대</b> 승리
-                  → 현재 티어 유지. 방 인원 <b className="text-[#E6E9EF]">절반 이상</b> 참가 + 양측 결투자가 있어야 시작돼요.
+                  → 현재 티어 유지. 방 인원 <b className="text-[#E6E9EF]">절반 이상</b> 참가 +{" "}
+                  {d.mode === "tetris" ? (
+                    <b className="text-[#E6E9EF]">각 팀 최소 1명</b>
+                  ) : (
+                    "양측 결투자"
+                  )}
+                  {d.mode === "tetris" ? "이면 시작돼요 (인원 동수 불필요)." : "가 있어야 시작돼요."}
                 </span>
               </div>
             )}
@@ -258,7 +283,7 @@ export function DecisionCard({ decision: d, myUserId, onJoin, onLeave }: Props) 
               <DuelBoard duel={d.duel} />
             ) : (
               <>
-                <Bracket pro={d.pro.fighters} con={d.con.fighters} />
+                <Bracket pro={d.pro.fighters} con={d.con.fighters} mode={d.mode} />
 
                 {/* Quorum */}
                 <div className="mt-3">

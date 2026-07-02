@@ -1,7 +1,9 @@
 /* Phaser is lazy-loaded and untyped here; `this` is the live Scene. */
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-this-alias */
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { Blocks, Clock, Undo2, type LucideIcon } from "lucide-react";
 
+import { TETRIS_ITEMS } from "@tier-list/shared";
 import { ARCADE, PIXEL, DuelTitle, RetroBackdrop } from "./duelChrome";
 import { COLS, ROWS, CI, COLORS, SHAPES, KICK_JLSTZ, KICK_I, computeGarbage, isPerfectClear, SEC_PER_ATTACK, type Piece } from "./tetrisCore";
 
@@ -56,6 +58,8 @@ type TetrisGameProps = {
 };
 
 const ITEM_LABEL: Record<string, string> = { reflect: "공격 반사", iblock: "일자 블록", time: "시간 +10" };
+const ITEM_ICON: Record<string, LucideIcon> = { reflect: Undo2, iblock: Blocks, time: Clock };
+const ITEM_DESC: Record<string, string> = Object.fromEntries(TETRIS_ITEMS.map((i) => [i.id, i.desc]));
 
 type SceneParams = {
   startSeconds: number;
@@ -72,6 +76,7 @@ type SceneParams = {
   arena?: ArenaProp;
   item?: string;
   useItem?: (type: string) => void;
+  itemStatus?: { used: boolean; reflectMs: number };
 };
 
 function tetrisScene(ss: number, p: SceneParams) {
@@ -129,6 +134,8 @@ function tetrisScene(ss: number, p: SceneParams) {
       s.seenSeq = 0;
       s.itemUsed = false; // consumable item: one use per game
       s.reflectMs = 0; // 공격 반사 remaining (visual aura)
+      s.itemFlash = 0; // brief centered flash on item use
+      s.clearFade = 0; // clear-type callout remaining
 
       const refill = () => {
         const b: Piece[] = ["I", "J", "L", "O", "S", "T", "Z"];
@@ -216,6 +223,7 @@ function tetrisScene(ss: number, p: SceneParams) {
         if (cleared > 0) {
           s.lines += cleared;
           const difficult = cleared === 4 || tspin;
+          const wasB2b = s.b2b; // B2B applies only if the *previous* clear was difficult too
           s.combo++;
           const perfect = isPerfectClear(s.grid);
           const g = computeGarbage(cleared, tspin, s.b2b, s.combo, perfect); // Tetrio attack
@@ -234,6 +242,20 @@ function tetrisScene(ss: number, p: SceneParams) {
             if (p.showOpp) s.projectiles.push({ fx: BX + BW / 2, fy: BY + GH / 2, tx: OX + (COLS * OC) / 2, ty: OY + (ROWS * OC) / 2, t: 0, dur: 420, color: 0x22d3ee });
             p.onClear?.(g, net);
           }
+          // Clear-type callout (Tetrio-style): tells you what you pulled off + the
+          // attack you sent — so a T-spin/tetris/combo reads as a deliberate hit.
+          const TYPE = tspin
+            ? `T-SPIN ${["", "SINGLE", "DOUBLE", "TRIPLE"][cleared] ?? ""}`.trim()
+            : (["", "SINGLE", "DOUBLE", "TRIPLE", "TETRIS"][cleared] ?? "");
+          const mods: string[] = [];
+          if (difficult && wasB2b) mods.push("B2B");
+          if (s.combo >= 1) mods.push(`${s.combo} COMBO`);
+          if (perfect) mods.push("PERFECT CLEAR");
+          if (net > 0) mods.push(`+${net}`);
+          s.clearBigT.setText(TYPE);
+          s.clearBigT.setColor(perfect ? "#22C55E" : tspin ? "#C084FC" : cleared === 4 ? "#FDE047" : "#67E8F9");
+          s.clearSubT.setText(mods.join(" · "));
+          s.clearFade = 1400;
         } else {
           s.combo = -1;
           if (s.incoming > 0) { addGarbage(s.incoming); s.incoming = 0; }
@@ -334,6 +356,8 @@ function tetrisScene(ss: number, p: SceneParams) {
         if (p.item === "iblock") { for (let i = 0; i < 3 && i < s.next.length; i++) s.next[i] = "I"; }
         else if (p.item === "time") s.time += 10000;
         else if (p.item === "reflect") s.reflectMs = 5000;
+        s.itemFlash = 1200;
+        if (s.itemFlashT) s.itemFlashT.setText(`${ITEM_LABEL[p.item] ?? p.item}!`);
         p.useItem?.(p.item);
       });
 
@@ -394,7 +418,14 @@ function tetrisScene(ss: number, p: SceneParams) {
       s.oppWait = s.add.text(OX + (COLS * OC) / 2, OY + (ROWS * OC) / 2, "", { fontFamily: PIXEL, fontSize: font(11), color: "#6A707E", align: "center" }).setOrigin(0.5).setVisible(false);
       s.statText = s.add.text(boardMidX, BY + ROWS * CELL + u(14), "", { fontFamily: PIXEL, fontSize: font(12), color: "#9AD8E8" }).setOrigin(0.5);
       s.reviveText = s.add.text(boardMidX, BY + (ROWS * CELL) / 2, "REVIVE", { fontFamily: ARCADE, fontSize: font(22), color: "#FF6B8A" }).setOrigin(0.5).setVisible(false);
-      s.itemText = s.add.text(u(16), u(30), "", { fontFamily: PIXEL, fontSize: font(11), fontStyle: "bold", color: "#A5B4FC" }).setOrigin(0, 0.5).setVisible(!!p.item);
+      // Clear-type callout (near the board top), fades after each line clear.
+      s.clearBigT = s.add.text(boardMidX, BY + u(46), "", { fontFamily: ARCADE, fontSize: font(15), color: "#67E8F9", align: "center" }).setOrigin(0.5).setVisible(false);
+      s.clearSubT = s.add.text(boardMidX, BY + u(66), "", { fontFamily: PIXEL, fontSize: font(12), fontStyle: "bold", color: "#FCA5A5", align: "center" }).setOrigin(0.5).setVisible(false);
+      if (p.item) {
+        // The slot panel (icon+name+desc+state) is a crisp React overlay; here we
+        // only draw the big centered flash on use.
+        s.itemFlashT = s.add.text(boardMidX, BY + (ROWS * CELL) / 2 - u(34), "", { fontFamily: ARCADE, fontSize: font(18), color: "#67E8F9" }).setOrigin(0.5).setVisible(false);
+      }
       if (p.arena) {
         s.arenaTitle = s.add.text(AX, u(64), "숫자키/클릭=타깃 · Tab=순환", { fontFamily: PIXEL, fontSize: font(10), color: "#67E8F9" }).setOrigin(0, 0);
         for (const sl of s.slots) {
@@ -532,9 +563,9 @@ function tetrisScene(ss: number, p: SceneParams) {
         s.statText.setText(`${s.lines}L${s.combo > 0 ? ` · ${s.combo} COMBO` : ""}${s.lives > 0 ? ` · 목숨 ${s.lives}` : ""}`);
         s.reviveText.setVisible(s.reviveFlash > 0);
         if (p.item) {
-          const label = ITEM_LABEL[p.item] ?? p.item;
-          s.itemText.setText(s.reflectMs > 0 ? `반사 ${Math.ceil(s.reflectMs / 1000)}s` : s.itemUsed ? `${label} (사용됨)` : `[E] ${label}`);
-          s.itemText.setColor(s.reflectMs > 0 ? "#67E8F9" : s.itemUsed ? "#6A707E" : "#A5B4FC");
+          // Publish live state to the React overlay panel; draw the use-flash.
+          if (p.itemStatus) { p.itemStatus.used = s.itemUsed; p.itemStatus.reflectMs = Math.max(0, s.reflectMs); }
+          s.itemFlashT.setVisible(s.itemFlash > 0);
         }
         // 공격 반사 aura around my board while active.
         if (s.reflectMs > 0) {
@@ -569,6 +600,16 @@ function tetrisScene(ss: number, p: SceneParams) {
       const s = this;
       if (s.reviveFlash > 0) s.reviveFlash -= dt;
       if (s.reflectMs > 0) s.reflectMs -= dt;
+      if (s.itemFlash > 0) s.itemFlash -= dt;
+      if (s.clearFade > 0) {
+        s.clearFade -= dt;
+        const a = Math.max(0, Math.min(1, s.clearFade / 400)); // hold, then fade last 400ms
+        s.clearBigT.setAlpha(a).setVisible(s.clearFade > 0);
+        s.clearSubT.setAlpha(a).setVisible(s.clearFade > 0 && s.clearSubT.text.length > 0);
+      } else {
+        s.clearBigT.setVisible(false);
+        s.clearSubT.setVisible(false);
+      }
       if (p.arena) {
         // Spawn a projectile for each new server attack event (arena).
         const st = p.arena.stateRef.current;
@@ -629,6 +670,14 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
   const doneRef = useRef(false);
   const [over, setOver] = useState<{ lines: number } | null>(null);
   const [confirmGiveUp, setConfirmGiveUp] = useState(false);
+  // Live item state published by the scene; a light ticker refreshes the panel.
+  const itemStatusRef = useRef({ used: false, reflectMs: 0 });
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!item) return;
+    const id = setInterval(() => setTick((t) => t + 1), 150);
+    return () => clearInterval(id);
+  }, [item]);
 
   useEffect(() => {
     let cancelled = false;
@@ -645,6 +694,7 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
         arena,
         item,
         useItem: onUseItem,
+        itemStatus: itemStatusRef.current,
         onClear,
         onBoard,
         getOpp: () => getOpponent?.() ?? null,
@@ -709,6 +759,8 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
     ["Z / X", "회전"],
     ["A", "180° 회전"],
     ["C / Shift", "홀드"],
+    ...(item ? ([["E", "아이템 사용"]] as [string, string][]) : []),
+    ...(arena ? ([["1~9", "타깃 지정"], ["Tab", "타깃 순환"]] as [string, string][]) : []),
     ["Esc", "항복"],
   ];
 
@@ -730,24 +782,50 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
         <div className="flex flex-col items-center gap-2 select-none">
           <DuelTitle />
           <div style={{ fontFamily: PIXEL, fontSize: 12, color: "#9AD8E8" }}>{by}</div>
-          <div className="flex items-center gap-4">
-            {/* 조작법 — to the left of the board, one control per line. */}
-            <div
-              className="hidden shrink-0 flex-col gap-2 sm:flex"
-              style={{ background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)", padding: "16px 14px" }}
-            >
-              <div style={{ fontFamily: ARCADE, fontSize: 12, color: "#67E8F9", textShadow: "2px 2px 0 #000", marginBottom: 4 }}>조작법</div>
-              {CONTROLS.map(([k, d]) => (
-                <div key={k} className="flex items-center gap-2.5">
-                  <span
-                    className="text-center"
-                    style={{ fontFamily: PIXEL, fontSize: 12, fontWeight: 700, color: "#FDE047", background: "#171B22", border: "2px solid #000", boxShadow: "2px 2px 0 #000", padding: "4px 7px", minWidth: 62 }}
-                  >
-                    {k}
-                  </span>
-                  <span style={{ fontFamily: PIXEL, fontSize: 12, color: "#C4C8D2" }}>{d}</span>
+          <div className="flex items-start gap-4">
+            {/* Left column, top-aligned with the board: 아이템 HUD (위) + 조작법. */}
+            <div className="hidden shrink-0 flex-col gap-3 sm:flex" style={{ width: 210 }}>
+              {/* 아이템 슬롯 — 아이콘 + 명칭 + 설명 + 상태 (준비/발동중/사용됨). */}
+              {item && (() => {
+                const st = itemStatusRef.current;
+                const active = st.reflectMs > 0;
+                const border = active ? "#22D3EE" : st.used ? "#3A3F4A" : "#6366F1";
+                const Icon = ITEM_ICON[item] ?? Blocks;
+                return (
+                  <div style={{ background: "rgba(9,12,20,.92)", border: `3px solid ${border}`, boxShadow: `3px 3px 0 #000${active ? ", 0 0 18px rgba(34,211,238,.55)" : ""}`, padding: "10px 12px" }}>
+                    <div style={{ fontFamily: PIXEL, fontSize: 10, color: "#8A8F9C" }}>아이템 · [E] 사용</div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <span className="grid size-8 shrink-0 place-items-center" style={{ background: "#0E1117", border: `2px solid ${border}` }}>
+                        <Icon className="size-[18px]" style={{ color: active ? "#67E8F9" : st.used ? "#6A707E" : "#A5B4FC" }} />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate" style={{ fontFamily: PIXEL, fontSize: 14, fontWeight: 700, color: st.used && !active ? "#8A8F9C" : "#fff" }}>{ITEM_LABEL[item] ?? item}</div>
+                        <div style={{ fontFamily: PIXEL, fontSize: 10, fontWeight: 700, color: active ? "#67E8F9" : st.used ? "#6A707E" : "#A5B4FC" }}>
+                          {active ? `발동 중 ${Math.ceil(st.reflectMs / 1000)}s` : st.used ? "사용됨" : "사용 가능"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-1.5" style={{ fontFamily: PIXEL, fontSize: 10, lineHeight: 1.35, color: "#9AD8E8" }}>{ITEM_DESC[item] ?? ""}</div>
+                  </div>
+                );
+              })()}
+              {/* 조작법 — one control per line. */}
+              <div style={{ background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)", padding: "16px 14px" }}>
+                <div style={{ fontFamily: ARCADE, fontSize: 12, color: "#67E8F9", textShadow: "2px 2px 0 #000", marginBottom: 8 }}>조작법</div>
+                <div className="flex flex-col gap-2">
+                  {CONTROLS.map(([k, d]) => (
+                    <div key={k} className="flex items-center gap-2.5">
+                      <span
+                        className="text-center"
+                        style={{ fontFamily: PIXEL, fontSize: 12, fontWeight: 700, color: "#FDE047", background: "#171B22", border: "2px solid #000", boxShadow: "2px 2px 0 #000", padding: "4px 7px", minWidth: 62 }}
+                      >
+                        {k}
+                      </span>
+                      <span style={{ fontFamily: PIXEL, fontSize: 12, color: "#C4C8D2" }}>{d}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
             <div ref={ref} className={arena ? "h-[640px] w-[980px] max-w-[94vw]" : "h-[705px] w-[840px] max-w-[80vw]"} style={{ pointerEvents: "auto", background: "rgba(9,12,20,.85)", border: "3px solid #000", boxShadow: "4px 4px 0 rgba(0,0,0,.5)" }} />
           </div>

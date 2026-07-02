@@ -240,6 +240,8 @@ export type DecisionSnapshot = {
   currentTier: { label: string; color: string } | null;
   proposer: string;
   phase: DecisionPhase;
+  /** Chosen mini-game — tetris runs a free-for-all arena (unequal teams OK). */
+  mode: DuelGameMode;
   /** Signup deadline (signup phase). */
   endsAt: number;
   durationMs: number;

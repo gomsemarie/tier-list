@@ -1109,6 +1109,7 @@ function buildDecisionSnapshot(room: Room): DecisionSnapshot | null {
     currentTier: d.fromTier ? tierMeta(room, d.fromTier) : null,
     proposer: d.proposerName,
     phase: d.phase,
+    mode: d.duelMode,
     endsAt: d.endsAt,
     durationMs: d.durationMs,
     pro: roster(d.pro),
@@ -1303,6 +1304,12 @@ function onDecisionSignupEnd(io: Server, room: Room) {
   // Need ≥1 fighter on at least one side to have any duel to balance toward.
   if (d.pro.fighters.size === 0 && d.con.fighters.size === 0) {
     decisionCancel(io, room, "결투자 없음");
+    return;
+  }
+  // Tetris = free-for-all arena: no equal-count requirement — just ≥1 per side.
+  if (d.duelMode === "tetris") {
+    if (d.pro.fighters.size >= 1 && d.con.fighters.size >= 1) startDecisionDuel(io, room);
+    else decisionCancel(io, room, "양 팀에 최소 1명씩 필요");
     return;
   }
   if (d.pro.fighters.size === d.con.fighters.size) {

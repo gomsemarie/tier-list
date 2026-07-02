@@ -34,6 +34,18 @@ export function isCombatBuff(id: string): id is Exclude<CombatBuffId, ""> {
 export function isAdminCombatBuff(id: string): boolean {
   return COMBAT_BUFFS.some((b) => b.id === id && b.admin === true);
 }
+/** A consumable Tetris item — equip one (default "" none), carried into any
+ *  Tetris game and used once via the item hotkey (E). */
+export type TetrisItemId = "" | "reflect" | "iblock" | "time";
+export const TETRIS_ITEMS: { id: Exclude<TetrisItemId, "">; name: string; desc: string }[] = [
+  { id: "reflect", name: "공격 반사", desc: "사용 후 5초간 받은 공격을 보낸 사람에게 반사" },
+  { id: "iblock", name: "일자 블록", desc: "사용 후 다음 3개 블록이 모두 일자(I)로 바뀜" },
+  { id: "time", name: "시간 +10초", desc: "사용 즉시 내 남은 시간이 10초 늘어남" },
+];
+export function isTetrisItem(id: string): id is Exclude<TetrisItemId, ""> {
+  return TETRIS_ITEMS.some((b) => b.id === id);
+}
+
 export type Rarity = "common" | "rare" | "epic" | "legendary";
 
 export const RARITY_META: Record<

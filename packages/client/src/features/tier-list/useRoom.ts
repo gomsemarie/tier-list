@@ -112,6 +112,8 @@ export type RoomConnection = {
   tetrisArenaRef: MutableRefObject<ArenaState>;
   /** Pick which living enemy I attack (숫자키/클릭/Tab). */
   tetrisSetTarget: (targetId: string) => void;
+  /** Use the equipped Tetris item (hotkey) — server handles 공격 반사. */
+  tetrisUseItem: (type: string) => void;
   /** The attacked user reflects the attack back to its sender. */
   parryAttack: (attackerId: string, escalate: boolean) => void;
   /** Report that this player got hit (parry missed) — finalizes the rally. */
@@ -134,7 +136,7 @@ export type RoomConnection = {
   updateProfile: (patch: ProfileUpdate) => Promise<UpdateResult>;
   fetchUser: (id: string) => Promise<PublicUser | null>;
   redeemCode: (code: string) => Promise<RedeemResult>;
-  equipPerk: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => Promise<UpdateResult>;
+  equipPerk: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string; tetrisItem?: string }) => Promise<UpdateResult>;
   fetchCodes: () => Promise<CodeInfo[]>;
   issueCode: (perks: string[]) => Promise<IssueCodeResult>;
   createRoom: (title: string, isPublic?: boolean, image?: string, coupang?: boolean) => void;
@@ -493,7 +495,7 @@ export function useRoom(): RoomConnection {
   }, []);
 
   const equipPerk = useCallback(
-    async (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => {
+    async (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string; tetrisItem?: string }) => {
       const res = await emitAck<UpdateResult>(
         socketRef.current,
         "perk:equip",
@@ -587,6 +589,9 @@ export function useRoom(): RoomConnection {
   }, []);
   const tetrisSetTarget = useCallback((targetId: string) => {
     socketRef.current?.emit("tetris:target", { targetId });
+  }, []);
+  const tetrisUseItem = useCallback((type: string) => {
+    socketRef.current?.emit("tetris:item", { type });
   }, []);
   const clearTetrisWin = useCallback(() => setTetrisWin(null), []);
   const tetrisClear = useCallback((attack: number, garbage: number) => {
@@ -693,6 +698,7 @@ export function useRoom(): RoomConnection {
     tetrisArena,
     tetrisArenaRef,
     tetrisSetTarget,
+    tetrisUseItem,
     parryAttack,
     rallyHit,
     moderation,

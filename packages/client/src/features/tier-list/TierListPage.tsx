@@ -102,6 +102,7 @@ export function TierListPage() {
   const botRef = useRef<TetrisBot | null>(null);
   const botDeltaRef = useRef(0);
   const botGarbageRef = useRef(0);
+  const botReflectUntilRef = useRef(0); // 공격 반사 아이템 (봇 대전, 클라이언트 반사)
   const [soloNote, setSoloNote] = useState<{ Icon: LucideIcon; title: string; sub: string; color: string } | null>(null);
   const soloParried = useRef(false);
   const soloLives = useRef(0); // 목숨(life): 미스를 버틸 수 있는 횟수
@@ -233,10 +234,16 @@ export function TierListPage() {
     if (!bot) return;
     botDeltaRef.current = 0;
     botGarbageRef.current = 0;
+    botReflectUntilRef.current = 0;
     const b = createTetrisBot({
       seconds: bot.seconds,
       difficulty: bot.difficulty,
       onClear: (attack, garbage) => {
+        // 공격 반사: while active, the bot's attack bounces back to the bot.
+        if (Date.now() < botReflectUntilRef.current) {
+          botRef.current?.receive(attack, garbage);
+          return;
+        }
         botDeltaRef.current -= SEC_PER_ATTACK * attack; // bot's attack drains my clock
         botGarbageRef.current += garbage; // + stack garbage on me
       },
@@ -1168,6 +1175,7 @@ export function TierListPage() {
           by={room.authUser?.nickname ?? "연습"}
           startSeconds={solo.seconds ?? 60}
           lives={room.authUser?.combatBuff === "life" ? 1 : 0}
+          item={room.authUser?.tetrisItem ?? ""}
           onGameOver={() => {}}
           onSurrender={() => setSolo(null)}
           onClose={() => setSolo(null)}
@@ -1184,6 +1192,8 @@ export function TierListPage() {
           deltaRef={botDeltaRef}
           garbageRef={botGarbageRef}
           lives={room.authUser?.combatBuff === "life" ? 1 : 0}
+          item={room.authUser?.tetrisItem ?? ""}
+          onUseItem={(type) => { if (type === "reflect") botReflectUntilRef.current = Date.now() + 5000; }}
           onClear={botOnClear}
           onGameOver={botOnGameOver}
           onSurrender={botOnGameOver}
@@ -1271,6 +1281,8 @@ export function TierListPage() {
           garbageRef={room.tetrisGarbageRef}
           startGarbage={room.tetris.startGarbage ?? 0}
           lives={room.tetris.lives ?? 0}
+          item={room.authUser?.tetrisItem ?? ""}
+          onUseItem={room.tetrisUseItem}
           onClear={tetrisOnClear}
           onBoard={tetrisOnBoard}
           onGameOver={tetrisOnGameOver}

@@ -9,7 +9,7 @@ import {
   tierListReducer,
   type Action,
 } from "@tier-list/shared";
-import { perkById, rolePriority, VOTE_ABSTAIN, isSpecBuff, isCombatBuff, isAdminCombatBuff } from "@tier-list/shared";
+import { perkById, rolePriority, VOTE_ABSTAIN, isSpecBuff, isCombatBuff, isAdminCombatBuff, isTetrisItem } from "@tier-list/shared";
 import type {
   AuthResult,
   AuthUser,
@@ -221,6 +221,10 @@ type TetrisArena = {
   target: Map<string, string>; // attacker → current target (an enemy)
 };
 const tetrisArenas = new Map<string, TetrisArena>();
+// 공격 반사 아이템: `${roomId}:${userId}` → epoch ms until which incoming attacks
+// bounce back to their sender.
+const tetrisReflect = new Map<string, number>();
+const REFLECT_MS = 5000;
 
 // Per-pair 1:1 연습 결투 buff charges, sourced from each fighter's *own*
 // combatBuff (목숨/방어) so a practice duel applies skills exactly like a
@@ -272,6 +276,7 @@ function toAuthUser(row: UserRow): AuthUser {
     scStyle: row.sc_style || undefined,
     specBuff: row.spec_buff || undefined,
     combatBuff: row.combat_buff || undefined,
+    tetrisItem: row.tetris_item || undefined,
   };
 }
 function toPublicUser(row: UserRow): PublicUser {
@@ -885,6 +890,8 @@ function startTetrisDuel(
 ) {
   tetrisOpp.set(tkey(room.id, aId), bId);
   tetrisOpp.set(tkey(room.id, bId), aId);
+  tetrisReflect.delete(tkey(room.id, aId));
+  tetrisReflect.delete(tkey(room.id, bId));
   const a = memberInfo(room, aId);
   const b = memberInfo(room, bId);
   emitToUser(io, room, aId, "tetris:start", { by: b.name, seconds, garbage: opts?.aGarbage ?? 0, lives: opts?.aLives ?? 0 });
@@ -923,6 +930,7 @@ function startTetrisArena(io: Server, room: Room) {
   cons.forEach((id, i) => pros.length && target.set(id, pros[i % pros.length]));
   const arena: TetrisArena = { seconds: d.duelSeconds || 60, fighters, alive: new Set([...pros, ...cons]), target };
   tetrisArenas.set(room.id, arena);
+  for (const f of fighters) tetrisReflect.delete(tkey(room.id, f.userId));
   const roster = fighters.map((f) => ({ userId: f.userId, name: memberInfo(room, f.userId).name, side: f.side }));
   for (const f of fighters) {
     const surge = du.buffs[f.side === "pro" ? "con" : "pro"].surge; // 공격: opponent surge → my start garbage
@@ -1679,12 +1687,12 @@ function issueCode(perkIds: string[]): IssueCodeResult {
 
 function equipPerk(
   userId: string,
-  patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string },
+  patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string; tetrisItem?: string },
 ): UpdateResult {
   const row = getUserById(userId);
   if (!row) return { ok: false, error: "사용자를 찾을 수 없어요." };
   const unlocked = new Set(parseUnlocked(row.unlocked));
-  const fields: Partial<Pick<UserRow, "frame" | "sc_style" | "spec_buff" | "combat_buff">> = {};
+  const fields: Partial<Pick<UserRow, "frame" | "sc_style" | "spec_buff" | "combat_buff" | "tetris_item">> = {};
   if (patch.frame !== undefined) {
     const f = patch.frame;
     if (f && (!unlocked.has(f) || perkById(f)?.type !== "frame"))
@@ -1709,6 +1717,11 @@ function equipPerk(
     if (b && isAdminCombatBuff(b) && row.is_admin !== 1)
       return { ok: false, error: "관리자 전용 스킬이에요." };
     fields.combat_buff = b;
+  }
+  if (patch.tetrisItem !== undefined) {
+    const b = patch.tetrisItem;
+    if (b && !isTetrisItem(b)) return { ok: false, error: "사용할 수 없는 아이템이에요." };
+    fields.tetris_item = b;
   }
   updateUser(userId, fields);
   return { ok: true, user: toAuthUser(getUserById(userId)!) };
@@ -2117,7 +2130,7 @@ io.on("connection", (socket: Socket) => {
 
   socket.on(
     "perk:equip",
-    (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }, ack?: Ack<UpdateResult>) => {
+    (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string; tetrisItem?: string }, ack?: Ack<UpdateResult>) => {
       if (!authedUser) {
         ack?.({ ok: false, error: "로그인이 필요합니다." });
         return;
@@ -2325,6 +2338,12 @@ io.on("connection", (socket: Socket) => {
         }
         broadcastDecision(io, room);
       }
+      // 공격 반사: if the target is reflecting, the attack bounces back to me.
+      if ((tetrisReflect.get(tkey(room.id, t)) ?? 0) > Date.now()) {
+        emitToUser(io, room, me, "tetris:oppClear", { attack: at, garbage: g });
+        arenaEmit(io, room, arena, "tetris:attack", { from: t, to: me }); // reflected projectile
+        return;
+      }
       emitToUser(io, room, t, "tetris:oppClear", { attack: at, garbage: g });
       arenaEmit(io, room, arena, "tetris:attack", { from: me, to: t }); // projectile A→B
       return;
@@ -2338,7 +2357,20 @@ io.on("connection", (socket: Socket) => {
       pb.bulwark.set(opp, (pb.bulwark.get(opp) ?? 0) - 1);
       g = 0; // 방어: absorbed
     }
+    // 공격 반사: opponent reflecting → the attack comes back to me.
+    if ((tetrisReflect.get(tkey(room.id, opp)) ?? 0) > Date.now()) {
+      emitToUser(io, room, me, "tetris:oppClear", { attack: at, garbage: g });
+      return;
+    }
     emitToUser(io, room, opp, "tetris:oppClear", { attack: at, garbage: g });
+  });
+
+  // 공격 반사 아이템 사용: 5초간 받는 공격을 되돌린다.
+  socket.on("tetris:item", ({ type }: { type?: string }) => {
+    if (!currentRoom || !authedUser) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    if (type === "reflect") tetrisReflect.set(tkey(room.id, authedUser.id), Date.now() + REFLECT_MS);
   });
 
   socket.on("tetris:board", ({ grid, seconds }: { grid?: number[][]; seconds?: number }) => {

@@ -48,8 +48,14 @@ type TetrisGameProps = {
   onSurrender?: () => void;
   /** 결정전 free-for-all: renders every fighter's board + targeting + projectiles. */
   arena?: ArenaProp;
+  /** Equipped consumable item id ("" = none), used once via the E key. */
+  item?: string;
+  /** Called when the item is used (reflect → parent notifies server / bot). */
+  onUseItem?: (type: string) => void;
   onClose: () => void;
 };
+
+const ITEM_LABEL: Record<string, string> = { reflect: "공격 반사", iblock: "일자 블록", time: "시간 +10" };
 
 type SceneParams = {
   startSeconds: number;
@@ -64,6 +70,8 @@ type SceneParams = {
   drainDelta: () => number;
   drainGarbage: () => number;
   arena?: ArenaProp;
+  item?: string;
+  useItem?: (type: string) => void;
 };
 
 function tetrisScene(ss: number, p: SceneParams) {
@@ -117,6 +125,10 @@ function tetrisScene(ss: number, p: SceneParams) {
       s.spin = false; // last successful action was a rotation (for t-spin)
       s.lives = Math.max(0, Math.floor(p.lives ?? 0)); // 목숨: top-out revives
       s.reviveFlash = 0;
+      s.projectiles = []; // attack motion (both 1:1 and arena)
+      s.seenSeq = 0;
+      s.itemUsed = false; // consumable item: one use per game
+      s.reflectMs = 0; // 공격 반사 remaining (visual aura)
 
       const refill = () => {
         const b: Piece[] = ["I", "J", "L", "O", "S", "T", "Z"];
@@ -217,6 +229,9 @@ function tetrisScene(ss: number, p: SceneParams) {
           // (Tetrio-weighted), separate from the net garbage that stacks.
           if (g > 0) {
             s.dealt += SEC_PER_ATTACK * g; // score = seconds drained from the opponent
+            // 1:1 attack motion: a projectile flies my board → opponent's. (In the
+            // arena the projectiles are driven by the server's tetris:attack events.)
+            if (p.showOpp) s.projectiles.push({ fx: BX + BW / 2, fy: BY + GH / 2, tx: OX + (COLS * OC) / 2, ty: OY + (ROWS * OC) / 2, t: 0, dur: 420, color: 0x22d3ee });
             p.onClear?.(g, net);
           }
         } else {
@@ -311,6 +326,16 @@ function tetrisScene(ss: number, p: SceneParams) {
       kb.on("keydown-SPACE", () => hardDrop());
       kb.on("keydown-C", () => holdSwap());
       kb.on("keydown-SHIFT", () => holdSwap());
+      // Consumable item (E): one use per game, effect by type.
+      kb.addCapture(["E"]);
+      kb.on("keydown-E", () => {
+        if (s.over || s.itemUsed || !p.item) return;
+        s.itemUsed = true;
+        if (p.item === "iblock") { for (let i = 0; i < 3 && i < s.next.length; i++) s.next[i] = "I"; }
+        else if (p.item === "time") s.time += 10000;
+        else if (p.item === "reflect") s.reflectMs = 5000;
+        p.useItem?.(p.item);
+      });
 
       // 결정전 arena: slot geometry, targeting input, projectile state.
       if (p.arena) {
@@ -327,8 +352,6 @@ function tetrisScene(ss: number, p: SceneParams) {
           const sl = s.slots.find((x: any) => x.f.userId === id);
           return sl ? { x: sl.x + 5 * ACELL, y: sl.y + u(15) + 10 * ACELL } : null;
         };
-        s.projectiles = [];
-        s.seenSeq = 0;
         const enemies = () => {
           const st = A.stateRef.current;
           return A.fighters.filter((f) => f.side !== mySide && !st.dead[f.userId]);
@@ -371,6 +394,7 @@ function tetrisScene(ss: number, p: SceneParams) {
       s.oppWait = s.add.text(OX + (COLS * OC) / 2, OY + (ROWS * OC) / 2, "", { fontFamily: PIXEL, fontSize: font(11), color: "#6A707E", align: "center" }).setOrigin(0.5).setVisible(false);
       s.statText = s.add.text(boardMidX, BY + ROWS * CELL + u(14), "", { fontFamily: PIXEL, fontSize: font(12), color: "#9AD8E8" }).setOrigin(0.5);
       s.reviveText = s.add.text(boardMidX, BY + (ROWS * CELL) / 2, "REVIVE", { fontFamily: ARCADE, fontSize: font(22), color: "#FF6B8A" }).setOrigin(0.5).setVisible(false);
+      s.itemText = s.add.text(u(16), u(30), "", { fontFamily: PIXEL, fontSize: font(11), fontStyle: "bold", color: "#A5B4FC" }).setOrigin(0, 0.5).setVisible(!!p.item);
       if (p.arena) {
         s.arenaTitle = s.add.text(AX, u(64), "숫자키/클릭=타깃 · Tab=순환", { fontFamily: PIXEL, fontSize: font(10), color: "#67E8F9" }).setOrigin(0, 0);
         for (const sl of s.slots) {
@@ -455,14 +479,17 @@ function tetrisScene(ss: number, p: SceneParams) {
           sl.nameT.setColor(isTarget ? "#FDE047" : isEnemy ? "#FCA5A5" : "#9AD8E8");
           sl.infoT.setText(dead ? "OUT" : `${bd ? Math.ceil(Math.max(0, bd.seconds)) : "?"}s`);
         }
+      };
+      // Attack motion — a bright dot streaking from attacker board → target board.
+      const drawProjectiles = (g: any) => {
         for (const pr of s.projectiles) {
           const t = Math.min(1, pr.t / pr.dur);
           const x = pr.fx + (pr.tx - pr.fx) * t;
           const y = pr.fy + (pr.ty - pr.fy) * t;
           g.fillStyle(pr.color, 0.9);
-          g.fillCircle(x, y, u(5));
-          g.fillStyle(0xffffff, 0.7);
-          g.fillCircle(x, y, u(2));
+          g.fillCircle(x, y, u(6));
+          g.fillStyle(0xffffff, 0.75);
+          g.fillCircle(x, y, u(3));
         }
       };
       s.draw = () => {
@@ -504,6 +531,16 @@ function tetrisScene(ss: number, p: SceneParams) {
         s.gaugeSec.setText(`${secLeft}s`);
         s.statText.setText(`${s.lines}L${s.combo > 0 ? ` · ${s.combo} COMBO` : ""}${s.lives > 0 ? ` · 목숨 ${s.lives}` : ""}`);
         s.reviveText.setVisible(s.reviveFlash > 0);
+        if (p.item) {
+          const label = ITEM_LABEL[p.item] ?? p.item;
+          s.itemText.setText(s.reflectMs > 0 ? `반사 ${Math.ceil(s.reflectMs / 1000)}s` : s.itemUsed ? `${label} (사용됨)` : `[E] ${label}`);
+          s.itemText.setColor(s.reflectMs > 0 ? "#67E8F9" : s.itemUsed ? "#6A707E" : "#A5B4FC");
+        }
+        // 공격 반사 aura around my board while active.
+        if (s.reflectMs > 0) {
+          g.lineStyle(u(4), 0x22d3ee, 0.85);
+          g.strokeRect(BX - u(6), BY - u(6), BW + u(12), ROWS * CELL + u(12));
+        }
         const opp = p.getOpp();
         if (p.showOpp) {
           // Score header (both sides) + always-present opponent panel.
@@ -524,14 +561,16 @@ function tetrisScene(ss: number, p: SceneParams) {
           s.oppInfo.setText("");
           s.oppWait.setVisible(false);
         }
+        drawProjectiles(g); // on top of everything
       };
       s.draw();
     },
     update: function (this: any, _t: number, dt: number) {
       const s = this;
       if (s.reviveFlash > 0) s.reviveFlash -= dt;
+      if (s.reflectMs > 0) s.reflectMs -= dt;
       if (p.arena) {
-        // Spawn a projectile for each new attack event, then advance/expire them.
+        // Spawn a projectile for each new server attack event (arena).
         const st = p.arena.stateRef.current;
         for (const a of st.attacks) {
           if (a.seq > s.seenSeq) {
@@ -541,13 +580,17 @@ function tetrisScene(ss: number, p: SceneParams) {
           }
         }
         if (st.attacks.length) s.seenSeq = Math.max(s.seenSeq, st.attacks[st.attacks.length - 1].seq);
-        s.projectiles = s.projectiles.filter((pr: any) => (pr.t += dt) < pr.dur);
       }
+      s.projectiles = s.projectiles.filter((pr: any) => (pr.t += dt) < pr.dur);
       if (!s.over) {
         s.time -= dt;
         const dd = p.drainDelta(); // opponent's clears drain my clock (negative)
         s.time += dd * 1000;
-        if (dd < 0) s.oppDealt += -dd; // mirror score: seconds the opponent drained from me
+        if (dd < 0) {
+          s.oppDealt += -dd; // mirror score: seconds the opponent drained from me
+          // 1:1 attack motion: opponent's board → mine when they hit me.
+          if (p.showOpp) s.projectiles.push({ fx: OX + (COLS * OC) / 2, fy: OY + (ROWS * OC) / 2, tx: BX + BW / 2, ty: BY + GH / 2, t: 0, dur: 420, color: 0xf87171 });
+        }
         s.incoming += p.drainGarbage(); // opponent's clears queue garbage on me
         if (s.time <= 0) { s.time = 0; s.over = true; p.onGameOver(s.lines); }
         // DAS auto-repeat
@@ -581,7 +624,7 @@ function tetrisScene(ss: number, p: SceneParams) {
 
 /** Full-screen Tetris time-attack. Solo = pure practice; multiplayer feeds an
  *  opponent board + drain/garbage via refs. */
-export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garbageRef, startGarbage = 0, lives = 0, onClear, onBoard, onGameOver, onSurrender, arena, onClose }: TetrisGameProps) {
+export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garbageRef, startGarbage = 0, lives = 0, onClear, onBoard, onGameOver, onSurrender, arena, item, onUseItem, onClose }: TetrisGameProps) {
   const ref = useRef<HTMLDivElement>(null);
   const doneRef = useRef(false);
   const [over, setOver] = useState<{ lines: number } | null>(null);
@@ -600,6 +643,8 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
         lives,
         showOpp: !!getOpponent,
         arena,
+        item,
+        useItem: onUseItem,
         onClear,
         onBoard,
         getOpp: () => getOpponent?.() ?? null,
@@ -635,7 +680,7 @@ export function TetrisGame({ by, startSeconds = 60, getOpponent, deltaRef, garba
       cancelled = true;
       if (game) game.destroy(true);
     };
-  }, [startSeconds, startGarbage, lives, getOpponent, deltaRef, garbageRef, arena, onClear, onBoard, onGameOver]);
+  }, [startSeconds, startGarbage, lives, getOpponent, deltaRef, garbageRef, arena, item, onUseItem, onClear, onBoard, onGameOver]);
 
   const giveUp = () => {
     setConfirmGiveUp(false);

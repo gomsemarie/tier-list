@@ -16,6 +16,8 @@ export type AuthUser = {
   specBuff?: string;
   /** Combat buff a fighter brings into a 결정전 ("" = none). */
   combatBuff?: string;
+  /** Consumable Tetris item carried into a game, used once via hotkey ("" = none). */
+  tetrisItem?: string;
 };
 
 /** Public-facing user info shown in the profile overlay (no private data). */

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Ban, Camera, Dices, Heart, Shield, ShieldHalf, Swords, X, Zap, type LucideIcon } from "lucide-react";
+import { Ban, Blocks, Camera, Clock, Dices, Heart, Shield, ShieldHalf, Swords, Undo2, X, Zap, type LucideIcon } from "lucide-react";
 
-import { COMBAT_BUFFS, FRAMES, PERKS, RARITY_META, SC_STYLES, SPEC_BUFFS } from "@tier-list/shared";
+import { COMBAT_BUFFS, FRAMES, PERKS, RARITY_META, SC_STYLES, SPEC_BUFFS, TETRIS_ITEMS } from "@tier-list/shared";
 
 /** Lucide icon per buff id (and "" → none). */
 const BUFF_ICON: Record<string, LucideIcon> = {
@@ -13,6 +13,12 @@ const BUFF_ICON: Record<string, LucideIcon> = {
   double: Swords,
   half: ShieldHalf,
 };
+const ITEM_ICON: Record<string, LucideIcon> = {
+  "": Ban,
+  reflect: Undo2,
+  iblock: Blocks,
+  time: Clock,
+};
 import type { AuthUser, CodeInfo, IssueCodeResult, RedeemResult, UpdateResult } from "@tier-list/shared";
 import { Avatar } from "./Avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -20,7 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 type AccountDialogProps = {
   user: AuthUser;
   onUpdateProfile: (patch: { nickname?: string; avatar?: string }) => Promise<UpdateResult>;
-  onEquip: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string }) => Promise<UpdateResult>;
+  onEquip: (patch: { frame?: string; scStyle?: string; specBuff?: string; combatBuff?: string; tetrisItem?: string }) => Promise<UpdateResult>;
   onRedeem: (code: string) => Promise<RedeemResult>;
   onIssueCode: (perks: string[]) => Promise<IssueCodeResult>;
   onFetchCodes: () => Promise<CodeInfo[]>;
@@ -267,6 +273,36 @@ export function AccountDialog({
                       style={equipped ? { boxShadow: "0 0 0 2px #6366F1" } : undefined}
                     >
                       <Icon className="size-[18px] text-[#F5B942]" />
+                      <span className="w-full truncate text-center text-[11px] font-bold text-white">{b.name}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <div className="font-bold text-white">{b.name}</div>
+                    <div className="text-[#9AA0AD]">{b.desc}</div>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+
+          <label className="mb-1.5 block text-[11px] font-semibold text-[#8A8F9C]">장착 — 테트리스 아이템 (E 키로 사용)</label>
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            {[
+              { id: "", name: "없음", desc: "테트리스에 아이템을 가져가지 않습니다" },
+              ...TETRIS_ITEMS,
+            ].map((b) => {
+              const equipped = (user.tetrisItem ?? "") === b.id;
+              const Icon = ITEM_ICON[b.id] ?? Ban;
+              return (
+                <Tooltip key={b.id || "none"}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => onEquip({ tetrisItem: b.id })}
+                      className="flex min-w-[58px] flex-1 flex-col items-center gap-1 rounded-[6px] border border-[#242a3a] bg-[#0E1117] px-1 py-2"
+                      style={equipped ? { boxShadow: "0 0 0 2px #6366F1" } : undefined}
+                    >
+                      <Icon className="size-[18px] text-[#67E8F9]" />
                       <span className="w-full truncate text-center text-[11px] font-bold text-white">{b.name}</span>
                     </button>
                   </TooltipTrigger>
